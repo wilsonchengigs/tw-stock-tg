@@ -1,7 +1,7 @@
 """
 每個交易日 21:30 傳台股日報到 Telegram（資料來源：臺灣證券交易所公開資料）
 
-- 下午（REPORT_PART=close）：加權指數漲跌、成交量（成交金額）、三大法人買賣超（證交所約 15:00 公布）
+- 下午（REPORT_PART=close）：加權指數漲跌、小時K MA20／60／240（資料存在 data/taiex_hourly.csv）、成交量（成交金額）、三大法人買賣超（證交所約 15:00 公布）
 - 晚上（REPORT_PART=margin）：大盤（上市）融資維持率、融資餘額增減（約 21:00 公布）、外資台指期淨未平倉（期交所）
 - REPORT_PART=all（預設，排程用這個）：兩段一起
 
@@ -95,6 +95,92 @@ def turnover(date: str):
         last_month = month_rows(first.strftime("%Y%m"))
         prev = last_month[-1][1] if last_month else 0.0
     return {"today": rows[i][1], "prev": prev}
+
+
+HOURLY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "taiex_hourly.csv")
+# 小時 K：每天 5 根，收盤時間 10:00、11:00、12:00、13:00、13:30（看盤軟體的 60 分 K 也是這樣切）
+HOUR_ENDS = ("10:00:00", "11:00:00", "12:00:00", "13:00:00", "13:30:00")
+HOURLY_MAS = (20, 60, 240)
+
+
+def hourly_bars(date: str):
+    """當天加權指數小時 K 的收盤 [(收盤時間, 指數)]；非交易日回 None。來源：證交所每 5 秒指數"""
+    d = get_json(f"https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_INDEX?date={date}&response=json")
+    if d.get("stat") != "OK":
+        return None
+    ticks = []
+    for t in tables_of(d):
+        f = t.get("fields", [])
+        if "時間" in f and "發行量加權股價指數" in f:
+            it, iv = f.index("時間"), f.index("發行量加權股價指數")
+            ticks = [(str(r[it]).strip(), num(r[iv])) for r in t.get("data", [])]
+    # 09:00:00 那筆是前一天收盤，不算進今天
+    ticks = [(tm, v) for tm, v in ticks if tm > "09:00:00" and v > 0]
+    if not ticks or ticks[-1][0] < HOUR_ENDS[-1]:
+        return None  # 還沒收盤或資料不完整
+    bars = []
+    for end in HOUR_ENDS:
+        inside = [v for tm, v in ticks if tm <= end]
+        if inside:
+            bars.append((end[:5], inside[-1]))
+    return bars
+
+
+def load_hourly() -> list:
+    if not os.path.exists(HOURLY_FILE):
+        return []
+    with open(HOURLY_FILE, encoding="utf-8") as fp:
+        rows = [ln.strip().split(",") for ln in fp if ln.strip() and not ln.startswith("date")]
+    return [(r[0], r[1], float(r[2])) for r in rows]
+
+
+def save_hourly(rows: list):
+    os.makedirs(os.path.dirname(HOURLY_FILE), exist_ok=True)
+    with open(HOURLY_FILE, "w", encoding="utf-8") as fp:
+        fp.write("date,time,close\n")
+        for d, tm, v in rows:
+            fp.write(f"{d},{tm},{v:.2f}\n")
+
+
+def update_hourly(date: str) -> list:
+    """把資料檔補到 date 為止（第一次會往回抓到夠算 MA240），回傳到 date 為止的所有小時 K"""
+    rows = load_hourly()
+    have = {r[0] for r in rows}
+    need = max(HOURLY_MAS) // len(HOUR_ENDS) + 4  # 交易日數，多抓幾天當緩衝
+    day = datetime.strptime(date, "%Y%m%d")
+    if rows:
+        stop = datetime.strptime(max(have), "%Y%m%d")
+    else:
+        stop = day - timedelta(days=int(need * 1.6) + 10)
+    cur, added = day, False
+    while cur > stop:
+        key = cur.strftime("%Y%m%d")
+        if cur.weekday() < 5 and key not in have:
+            bars = hourly_bars(key)
+            if bars:
+                rows += [(key, tm, v) for tm, v in bars]
+                added = True
+        cur -= timedelta(days=1)
+    if added:
+        rows.sort()
+        save_hourly(rows)
+    return [r for r in rows if r[0] <= date]
+
+
+def hourly_ma_line(date: str):
+    rows = update_hourly(date)
+    closes = [v for _, _, v in rows]
+    if not closes or rows[-1][0] != date:
+        return None
+    last = closes[-1]
+    parts = []
+    for n in HOURLY_MAS:
+        if len(closes) < n:
+            parts.append(f"MA{n} 資料不足")
+            continue
+        ma = sum(closes[-n:]) / n
+        parts.append(f"MA{n} {ma:,.0f}（{'上' if last >= ma else '下'} {abs(last - ma) / ma * 100:.1f}%）")
+    return "小時K：" + "・".join(parts)
 
 
 def institutional(date: str):
@@ -240,6 +326,13 @@ def close_lines(date: str, retry: bool):
     arrow = "🔺" if idx["change"] > 0 else "🔻" if idx["change"] < 0 else "➖"
     trend = "上漲" if idx["change"] > 0 else "下跌" if idx["change"] < 0 else "平盤"
     lines = [f"加權指數：{idx['close']:,.2f}　{arrow}{trend} {abs(idx['change']):,.2f} 點（{idx['pct']:+.2f}%）"]
+    try:
+        ma = hourly_ma_line(date)
+    except Exception as e:  # 均線抓不到不影響其他資訊
+        print(f"小時K 均線失敗：{e}", file=sys.stderr)
+        ma = None
+    if ma:
+        lines.append(ma)
     vol = turnover(date)
     if vol is not None:
         diff = f"，比前一交易日 {yi(vol['today'] - vol['prev'])}" if vol["prev"] > 0 else ""

@@ -183,6 +183,84 @@ def hourly_ma_line(date: str):
     return "小時K：" + "・".join(parts)
 
 
+# ── 交易策略：加權指數 80 日均線 ±2% 緩衝，每週最後一個交易日收盤判斷 ──────────────
+# 回測（1998～2026，週頻、含交易成本）：年化約 12.5%、最大回檔約 -34%（大盤買進持有 8.6%、-65%）；
+# 2015-09 之後用 0050／00631L 真實價格驗證：年化 22.5%、最大回檔 -29.6%（0050 買進持有 20.6%、-33.8%）。
+# 均線 50～120 日、緩衝 0～3% 的鄰近參數結果都接近，不是單一參數湊出來的
+STRATEGY_MA = 80
+STRATEGY_BAND = 0.02
+STRATEGY_ON = "50% 00631L（台灣50正2）＋ 50% 0050"
+STRATEGY_OFF = "100% 現金（或定存）"
+
+
+def taiex_daily(date: str, months: int = 14) -> list:
+    """加權指數日收盤 [(YYYYMMDD, 收盤)]，往前抓 months 個月（證交所 FMTQIK，每月一張表）"""
+    out = []
+    first = datetime.strptime(date[:6] + "01", "%Y%m%d")
+    yms = []
+    for _ in range(months):
+        yms.append(first.strftime("%Y%m"))
+        first = (first - timedelta(days=1)).replace(day=1)
+    for ym in reversed(yms):
+        d = get_json(f"https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date={ym}01&response=json")
+        for t in tables_of(d):
+            f = t.get("fields", [])
+            if "日期" in f and "發行量加權股價指數" in f:
+                idate, iv = f.index("日期"), f.index("發行量加權股價指數")
+                for r in t.get("data", []):
+                    y, m, dd = str(r[idate]).strip().split("/")
+                    out.append((f"{int(y) + 1911}{int(m):02d}{int(dd):02d}", num(r[iv])))
+    return [x for x in out if x[0] <= date]
+
+
+def strategy_state(closes: list):
+    """依每週最後一個交易日的收盤跑一遍，回傳 (目前狀態, 上次切換日, 今天的 MA, 這週是否已判斷)"""
+    state, switched = False, None
+    ma = None
+    for i, (d, px) in enumerate(closes):
+        if i + 1 < STRATEGY_MA:
+            continue
+        ma = sum(v for _, v in closes[i + 1 - STRATEGY_MA:i + 1]) / STRATEGY_MA
+        last_of_week = i == len(closes) - 1 or (
+            datetime.strptime(d, "%Y%m%d").isocalendar()[:2]
+            != datetime.strptime(closes[i + 1][0], "%Y%m%d").isocalendar()[:2]
+        )
+        if not last_of_week:
+            continue
+        if i == len(closes) - 1 and datetime.strptime(d, "%Y%m%d").weekday() != 4:
+            continue  # 今天不是週五：這週還沒結束，不判斷
+        if px > ma * (1 + STRATEGY_BAND) and not state:
+            state, switched = True, d
+        elif px < ma * (1 - STRATEGY_BAND) and state:
+            state, switched = False, d
+    return state, switched, ma
+
+
+def strategy_lines(date: str) -> list:
+    closes = taiex_daily(date)
+    if len(closes) < STRATEGY_MA + 5 or closes[-1][0] != date:
+        return []
+    state, switched, ma = strategy_state(closes)
+    px = closes[-1][1]
+    up, dn = ma * (1 + STRATEGY_BAND), ma * (1 - STRATEGY_BAND)
+    is_friday = datetime.strptime(date, "%Y%m%d").weekday() == 4
+    lines = ["", f"🧭 策略（{STRATEGY_MA} 日均線 ±{STRATEGY_BAND:.0%}，每週五收盤判斷）"]
+    lines.append(f"指數 {px:,.0f}｜MA{STRATEGY_MA} {ma:,.0f}｜進場線 {up:,.0f}｜出場線 {dn:,.0f}")
+    hold = STRATEGY_ON if state else STRATEGY_OFF
+    since = f"（{int(switched[4:6])}/{int(switched[6:])} 起）" if switched else ""
+    lines.append(f"應持有：{hold}{since}")
+    if is_friday and switched == date:
+        action = f"買進 → {STRATEGY_ON}" if state else f"全部賣出 → {STRATEGY_OFF}"
+        lines.append(f"⚠️ 本週訊號切換：下一個交易日收盤 {action}")
+    elif is_friday:
+        lines.append("本週判斷：不用動作")
+    else:
+        need = up if not state else dn
+        word_ = "站上" if not state else "跌破"
+        lines.append(f"週五收盤{word_} {need:,.0f} 才切換（目前距離 {(need / px - 1):+.1%}）")
+    return lines
+
+
 def institutional(date: str):
     """回傳 {名稱: 買賣差額(元)}；非交易日或還沒公布回 None"""
     d = get_json(f"https://www.twse.com.tw/rwd/zh/fund/BFI82U?type=day&dayDate={date}&response=json")
@@ -409,6 +487,11 @@ def main():
     title = {"close": "台股收盤", "margin": "台股融資", "all": "台股日報"}[part]
     if part in ("margin", "all"):
         body += margin_lines(date, retry)
+    if part in ("close", "all"):
+        try:
+            body += strategy_lines(date)
+        except Exception as e:  # 策略算不出來不影響其他資訊
+            print(f"策略失敗：{e}", file=sys.stderr)
     text = "\n".join([f"📊 {md} {title}"] + body)
     print(text)
     send(text)

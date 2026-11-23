@@ -1,9 +1,9 @@
 name: 台股日報
 on:
   schedule:
-    # GitHub 用 UTC；週一到週五。排程可能延遲幾分鐘到半小時，資料還沒出來時程式會自己等
-    - cron: '30 7 * * 1-5'   # 台灣 15:30：大盤漲跌＋三大法人
-    - cron: '30 13 * * 1-5'  # 台灣 21:30：融資維持率
+    # GitHub 用 UTC；週一到週五台灣 21:30 一次寄全部（融資資料約 21:00 才公布）。
+    # 排程可能延遲幾分鐘到半小時，資料還沒出來時程式會自己等
+    - cron: '30 13 * * 1-5'
   workflow_dispatch:
     inputs:
       part:
@@ -26,5 +26,5 @@ jobs:
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          REPORT_PART: ${{ github.event.schedule == '30 7 * * 1-5' && 'close' || github.event.schedule == '30 13 * * 1-5' && 'margin' || inputs.part }}
+          REPORT_PART: ${{ inputs.part || 'all' }}
           REPORT_DATE: ${{ inputs.date }}

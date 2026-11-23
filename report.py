@@ -2,7 +2,7 @@
 每個交易日 21:30 傳台股日報到 Telegram（資料來源：臺灣證券交易所公開資料）
 
 - 下午（REPORT_PART=close）：加權指數漲跌、成交量（成交金額）、三大法人買賣超（證交所約 15:00 公布）
-- 晚上（REPORT_PART=margin）：大盤（上市）融資維持率（融資資料約 21:00 公布）
+- 晚上（REPORT_PART=margin）：大盤（上市）融資維持率、融資餘額增減（約 21:00 公布）、外資台指期淨未平倉（期交所）
 - REPORT_PART=all（預設，排程用這個）：兩段一起
 
 融資維持率 = Σ(個股融資餘額張數 × 1000 × 收盤價) ÷ 融資餘額總金額（證交所不直接公布，一般網站也是這樣估算）
@@ -129,12 +129,13 @@ def close_prices(date: str) -> dict:
     return prices
 
 
-def margin_ratio(date: str):
-    """回傳融資維持率（%）；非交易日或資料不齊回 None"""
+def margin_data(date: str):
+    """回傳 {ratio 融資維持率%, amount 融資餘額(元), prev_amount 前日融資餘額(元)}；非交易日或資料不齊回 None"""
     d = get_json(f"https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date={date}&selectType=ALL&response=json")
     if d.get("stat") != "OK":
         return None
     total_amount = 0.0  # 融資今日餘額（仟元）
+    prev_amount = 0.0   # 融資前日餘額（仟元）
     holdings = {}       # 代號 -> 融資今日餘額（張）
     for t in tables_of(d):
         f = [str(x) for x in t.get("fields", [])]
@@ -142,7 +143,8 @@ def margin_ratio(date: str):
         if f and f[0] == "項目":
             for r in rows:
                 if "融資金額" in str(r[0]):
-                    total_amount = num(r[5])  # 欄位：項目, 買進, 賣出, 現金償還, 前日餘額, 今日餘額
+                    # 欄位：項目, 買進, 賣出, 現金償還, 前日餘額, 今日餘額
+                    prev_amount, total_amount = num(r[4]), num(r[5])
         elif f and f[0] in ("代號", "股票代號"):
             # 欄位：代號, 名稱, 融資買進, 融資賣出, 現金償還, 前日餘額, 今日餘額, 限額, 融券…
             for r in rows:
@@ -153,7 +155,41 @@ def margin_ratio(date: str):
     if not prices:
         return None
     value = sum(lots * 1000 * prices.get(code, 0.0) for code, lots in holdings.items())
-    return value / (total_amount * 1000) * 100
+    return {
+        "ratio": value / (total_amount * 1000) * 100,
+        "amount": total_amount * 1000,
+        "prev_amount": prev_amount * 1000,
+    }
+
+
+def margin_ratio(date: str):
+    m = margin_data(date)
+    return m["ratio"] if m else None
+
+
+def foreign_futures(date: str):
+    """外資台指期（TXF）多空未平倉口數淨額 {net, prev}；資料來源期交所，非交易日回 None"""
+    start = (datetime.strptime(date, "%Y%m%d") - timedelta(days=14)).strftime("%Y/%m/%d")
+    end = f"{date[:4]}/{date[4:6]}/{date[6:]}"
+    body = urllib.parse.urlencode({"queryStartDate": start, "queryEndDate": end, "commodityId": "TXF"}).encode()
+    req = urllib.request.Request("https://www.taifex.com.tw/cht/3/futContractsDateDown", data=body, headers=UA)
+    with urllib.request.urlopen(req, timeout=30) as res:
+        raw = res.read()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("big5", errors="replace")
+    lines = [ln.split(",") for ln in text.strip().splitlines()]
+    if not lines or "身份別" not in lines[0]:
+        return None
+    h = lines[0]
+    idate, iwho, inet = h.index("日期"), h.index("身份別"), h.index("多空未平倉口數淨額")
+    rows = [(r[idate].strip(), num(r[inet])) for r in lines[1:] if len(r) > inet and r[iwho].strip().startswith("外資")]
+    rows.sort()
+    if not rows or rows[-1][0] != end:
+        return None
+    prev = rows[-2][1] if len(rows) >= 2 else None
+    return {"net": rows[-1][1], "prev": prev}
 
 
 def prev_trading_ratio(date: str):
@@ -218,14 +254,41 @@ def close_lines(date: str, retry: bool):
     return lines
 
 
+def oi_text(v: float) -> str:
+    return f"{'空單' if v < 0 else '多單'} {abs(v):,.0f} 口"
+
+
 def margin_lines(date: str, retry: bool):
-    ratio = wait_for(margin_ratio, date, retry)
-    if ratio is None:
-        return ["大盤融資維持率：資料還沒公布"]
-    prev = prev_trading_ratio(date)
-    if prev is None:
-        return [f"大盤融資維持率：{ratio:.1f}%"]
-    return [f"大盤融資維持率：{ratio:.1f}%（前一交易日 {prev:.1f}%，{ratio - prev:+.1f}）"]
+    lines = []
+    m = wait_for(margin_data, date, retry)
+    if m is None:
+        lines.append("大盤融資維持率：資料還沒公布")
+    else:
+        prev = prev_trading_ratio(date)
+        tail = f"（前一交易日 {prev:.1f}%，{m['ratio'] - prev:+.1f}）" if prev is not None else ""
+        lines.append(f"大盤融資維持率：{m['ratio']:.1f}%{tail}")
+        delta = m["amount"] - m["prev_amount"]
+        trend = "增加" if delta > 0 else "減少" if delta < 0 else "持平"
+        lines.append(f"融資餘額：{m['amount'] / 1e8:,.0f} 億（{trend} {abs(delta) / 1e8:,.1f} 億）")
+
+    fut = foreign_futures(date)
+    if fut is None:
+        lines.append("外資台指期淨未平倉：資料還沒公布")
+    else:
+        line = f"外資台指期淨未平倉：{oi_text(fut['net'])}"
+        if fut["prev"] is not None:
+            diff = fut["net"] - fut["prev"]
+            if diff == 0:
+                line += "（與前一交易日相同）"
+            elif (fut["net"] < 0) != (fut["prev"] < 0):
+                line += f"（前一交易日 {oi_text(fut['prev'])}，多空翻轉）"
+            else:
+                side = "空單" if fut["net"] < 0 else "多單"
+                # 淨空單時數字變小（更負）＝空單增加；淨多單時數字變大＝多單增加
+                grew = (diff < 0) if fut["net"] < 0 else (diff > 0)
+                line += f"（{side}{'增加' if grew else '減少'} {abs(diff):,.0f} 口）"
+        lines.append(line)
+    return lines
 
 
 def main():

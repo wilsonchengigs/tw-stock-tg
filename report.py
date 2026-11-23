@@ -183,12 +183,14 @@ def hourly_ma_line(date: str):
     return "小時K：" + "・".join(parts)
 
 
-# ── 交易策略：加權指數 80 日均線 ±2% 緩衝，每週最後一個交易日收盤判斷 ──────────────
-# 回測（1998～2026，週頻、含交易成本）：年化約 12.5%、最大回檔約 -34%（大盤買進持有 8.6%、-65%）；
-# 2015-09 之後用 0050／00631L 真實價格驗證：年化 22.5%、最大回檔 -29.6%（0050 買進持有 20.6%、-33.8%）。
-# 均線 50～120 日、緩衝 0～3% 的鄰近參數結果都接近，不是單一參數湊出來的
-STRATEGY_MA = 80
-STRATEGY_BAND = 0.02
+# ── 交易策略：每週最後一個交易日收盤判斷 ─────────────────────────────────────
+# 出場：收盤跌破 80 日均線 ×0.98；進場：收盤站上 60 日均線 ×1.01（進場用較短的均線，大跌後回得比較快）
+# 回測（1998～2026，週頻、含交易成本）：年化約 14.4%、最大回檔約 -34%（大盤買進持有 8.6%、-65%）；
+# 2015-09 之後用 0050／00631L 真實價格驗證：年化 25.0%、最大回檔 -29.6%（0050 買進持有 20.6%、-33.8%）。
+# 出場 80～90 日、進場 60～70 日的鄰近參數都在 14～15%／-31～-34%，不是單一參數湊出來的。
+# 進場改用 10～20 日這類短均線反而更差（大跌途中的反彈會一直騙進場，最大回檔 > 58%）
+STRATEGY_EXIT_MA, STRATEGY_EXIT_BAND = 80, 0.02
+STRATEGY_ENTRY_MA, STRATEGY_ENTRY_BAND = 60, 0.01
 STRATEGY_ON = "50% 00631L（台灣50正2）＋ 50% 0050"
 STRATEGY_OFF = "100% 現金（或定存）"
 
@@ -214,13 +216,15 @@ def taiex_daily(date: str, months: int = 14) -> list:
 
 
 def strategy_state(closes: list):
-    """依每週最後一個交易日的收盤跑一遍，回傳 (目前狀態, 上次切換日, 今天的 MA, 這週是否已判斷)"""
+    """依每週最後一個交易日的收盤跑一遍，回傳 (目前狀態, 上次切換日, 今天的出場均線, 今天的進場均線)"""
     state, switched = False, None
-    ma = None
+    ma_x = ma_n = None
+    need = max(STRATEGY_EXIT_MA, STRATEGY_ENTRY_MA)
     for i, (d, px) in enumerate(closes):
-        if i + 1 < STRATEGY_MA:
+        if i + 1 < need:
             continue
-        ma = sum(v for _, v in closes[i + 1 - STRATEGY_MA:i + 1]) / STRATEGY_MA
+        ma_x = sum(v for _, v in closes[i + 1 - STRATEGY_EXIT_MA:i + 1]) / STRATEGY_EXIT_MA
+        ma_n = sum(v for _, v in closes[i + 1 - STRATEGY_ENTRY_MA:i + 1]) / STRATEGY_ENTRY_MA
         last_of_week = i == len(closes) - 1 or (
             datetime.strptime(d, "%Y%m%d").isocalendar()[:2]
             != datetime.strptime(closes[i + 1][0], "%Y%m%d").isocalendar()[:2]
@@ -229,23 +233,23 @@ def strategy_state(closes: list):
             continue
         if i == len(closes) - 1 and datetime.strptime(d, "%Y%m%d").weekday() != 4:
             continue  # 今天不是週五：這週還沒結束，不判斷
-        if px > ma * (1 + STRATEGY_BAND) and not state:
+        if not state and px > ma_n * (1 + STRATEGY_ENTRY_BAND):
             state, switched = True, d
-        elif px < ma * (1 - STRATEGY_BAND) and state:
+        elif state and px < ma_x * (1 - STRATEGY_EXIT_BAND):
             state, switched = False, d
-    return state, switched, ma
+    return state, switched, ma_x, ma_n
 
 
 def strategy_lines(date: str) -> list:
     closes = taiex_daily(date)
-    if len(closes) < STRATEGY_MA + 5 or closes[-1][0] != date:
+    if len(closes) < max(STRATEGY_EXIT_MA, STRATEGY_ENTRY_MA) + 5 or closes[-1][0] != date:
         return []
-    state, switched, ma = strategy_state(closes)
+    state, switched, ma_x, ma_n = strategy_state(closes)
     px = closes[-1][1]
-    up, dn = ma * (1 + STRATEGY_BAND), ma * (1 - STRATEGY_BAND)
+    up, dn = ma_n * (1 + STRATEGY_ENTRY_BAND), ma_x * (1 - STRATEGY_EXIT_BAND)
     is_friday = datetime.strptime(date, "%Y%m%d").weekday() == 4
-    lines = ["", f"🧭 策略（{STRATEGY_MA} 日均線 ±{STRATEGY_BAND:.0%}，每週五收盤判斷）"]
-    lines.append(f"指數 {px:,.0f}｜MA{STRATEGY_MA} {ma:,.0f}｜進場線 {up:,.0f}｜出場線 {dn:,.0f}")
+    lines = ["", f"🧭 策略（進場 MA{STRATEGY_ENTRY_MA}+{STRATEGY_ENTRY_BAND:.0%}、出場 MA{STRATEGY_EXIT_MA}-{STRATEGY_EXIT_BAND:.0%}，每週五收盤判斷）"]
+    lines.append(f"指數 {px:,.0f}｜進場線 {up:,.0f}（MA{STRATEGY_ENTRY_MA} {ma_n:,.0f}）｜出場線 {dn:,.0f}（MA{STRATEGY_EXIT_MA} {ma_x:,.0f}）")
     hold = STRATEGY_ON if state else STRATEGY_OFF
     since = f"（{int(switched[4:6])}/{int(switched[6:])} 起）" if switched else ""
     lines.append(f"應持有：{hold}{since}")

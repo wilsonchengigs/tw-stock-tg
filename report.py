@@ -448,13 +448,14 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
     req = urllib.request.Request("https://www.taifex.com.tw/cht/3/futContractsDateDown", data=body, headers=UA)
     with urllib.request.urlopen(req, timeout=30) as res:
         text = res.read().decode("big5", errors="replace")
-    net = []
+    net, flow = [], []
     for ln in text.splitlines()[1:]:
         r = ln.split(",")
         if len(r) >= 14 and "外資" in r[2]:
             lo, sh = num(r[9]), num(r[11])
             if lo or sh:  # 當天未平倉尚未公布時為 0
                 net.append((r[0].replace("/", ""), lo - sh))
+                flow.append(num(r[3]) - num(r[5]))  # 交易口數淨額（研究 127／128）
     if len(net) < 122 or net[-1][0] != date:
         return []
     deltas = [net[k][1] - net[k - 1][1] for k in range(1, len(net))]
@@ -463,7 +464,12 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
     sd = (sum((x - m_) ** 2 for x in hist) / len(hist)) ** 0.5
     z = (deltas[-1] - m_) / sd if sd > 0 else 0.0
     on_now = strategy_state(closes, heat)[0]
-    lines = [f"📊 外資台指期（觀察，研究 73／75／79，未納入規則）：淨未平倉 {net[-1][1]:+,.0f} 口，今日變化 {deltas[-1]:+,.0f} 口（z {z:+.2f}，門檻 ±{FOREIGN_Z}）"]
+    fh = flow[-251:-1]
+    fm = sum(fh) / len(fh)
+    fsd = (sum((x - fm) ** 2 for x in fh) / len(fh)) ** 0.5
+    zf = (flow[-1] - fm) / fsd if fsd > 0 else 0.0
+    lines = [f"📊 外資台指期（觀察，研究 73／75／79／128，未納入規則）：淨未平倉 {net[-1][1]:+,.0f} 口，今日變化 {deltas[-1]:+,.0f} 口（z {z:+.2f}）、"
+             f"交易淨額 {flow[-1]:+,.0f} 口（z {zf:+.2f}），門檻 ±{FOREIGN_Z}"]
 
     def third_wed(d):
         x = datetime.strptime(d, "%Y%m%d")
@@ -482,6 +488,9 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
             lines.append("🎯 獨立短線（研究 106，2019～ 只有 7 年、小額）：明早 8:45 開盤做多台指期近月，抱 5 個交易日後收盤平倉"
                          "（多頭時歷史 57 筆、勝率 81%、每筆 +1.29%；前後段都正。抱 1 天在 2023 後已無效）")
         lines.append("　外資大回補／加多：歷史上之後 1～10 天偏強" + ("；研究 75／79 回測：在場時明早開盤加 1 倍台指期抱 5 天較好（未經同意，不算規則）" if on_now else ""))
+        if on_now:
+            lines.append("　研究 128 雙指標：" + (f"交易淨額也 > {FOREIGN_Z}（確認）→ 在場加碼回測最好（加 1 倍抱 5 天 v3 48.2%→58.8%、回檔 -27.1%→-27.9%，隨機 p 0.01）"
+                                              if zf > FOREIGN_Z else f"交易淨額 z {zf:+.2f} 未確認 → 單看未平倉時加碼回檔較深（-33%），保守者可只加 0.5 倍或不加"))
     elif z < -FOREIGN_Z:
         lines.append("　外資大加空：歷史上之後 1～10 天偏弱（研究 79：排除結算日後，在場時「減碼」已無明顯好處，僅供參考）")
     return lines

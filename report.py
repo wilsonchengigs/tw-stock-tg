@@ -515,8 +515,12 @@ def _overlay_core(date: str, closes: list, heat: dict) -> list:
                          + ("（< 5%：研究 64i 顯示這種情況較易遇到隨即出場，保守者可改加 0.5 倍或不加）" if gap < 0.05 else "（≥ 5%：歷史上這類加碼勝率較高）"))
         else:
             lines.append("今日爆量收黑，但現行策略空手：主策略不動作（研究 64）")
-        lines.append(f"🎯 獨立短線（研究 63d／63g，與主策略分開、小額）：明早 8:45 開盤買台指期近月（下午提醒時已在夜盤買就不用再買），抱 {SHORT_HOLD} 個交易日後收盤平倉，"
-                     f"停損 {SHORT_STOP:.0%}（歷史 72 筆、勝率約 74%、每筆約 +1%／+430 點；一年約 2～3 次）")
+        skip = short_skip(closes, heat, date)
+        if skip:
+            lines.append(f"⛔ 獨立短線（研究 63d／105）建議跳過：{skip}")
+        else:
+            lines.append(f"🎯 獨立短線（研究 63d／63g／105，與主策略分開、小額）：明早 8:45 開盤買台指期近月（下午提醒時已在夜盤買就不用再買），抱 {SHORT_HOLD} 個交易日後收盤平倉，"
+                         f"停損 {SHORT_STOP:.0%}（多頭且融資正常時歷史 33 筆、勝率 91%、每筆 +1.65%；一年約 1～2 次）")
     elif active is not None and on_now:
         held = n - 1 - active
         lines.append(f"加碼持有中：{int(days[active][4:6])}/{int(days[active][6:])} 的訊號，已過 {held}/{OVERLAY_H} 個交易日"
@@ -527,7 +531,7 @@ def _overlay_core(date: str, closes: list, heat: dict) -> list:
     if not (vr >= OVERLAY_K and down):
         for j in range(max(21, n - 1 - SHORT_HOLD), n - 1):
             r, dn = signal(j)
-            if r >= OVERLAY_K and dn:
+            if r >= OVERLAY_K and dn and not short_skip([c for c in closes if c[0] <= days[j]], heat, days[j]):
                 held = n - 1 - j
                 entry = cdict[days[j]]
                 lines.append(f"🎯 獨立短線持有中：{int(days[j][4:6])}/{int(days[j][6:])} 的爆量收黑，已過 {held}/{SHORT_HOLD} 個交易日"
@@ -538,6 +542,17 @@ def _overlay_core(date: str, closes: list, heat: dict) -> list:
 
 # ── 下午即時提醒（REPORT_PART=alert，14:40 排程）：爆量收黑收盤就知道，21:30 日報時夜盤 15:00 開盤已過 ──────────
 # 研究 63d：當晚夜盤 15:00 進每筆 +1.61%、隔天開盤進 +1.08%、隔天收盤才進 +0.44%（不顯著）→ 越早進越好，所以收盤後另外提醒
+def short_skip(closes: list, heat: dict, date: str):
+    """研究 105：爆量收黑獨立短線只在「多頭（指數 ≥ 出場線）且融資不過熱」有優勢；其他情況回傳跳過的理由"""
+    v = heat_on(heat, date)
+    if v is not None and is_hot(v):
+        return "融資過熱中（研究 105：過熱當天 5 筆、勝率 40%、每筆 -0.5%，含 2026-10-15 -2.2%）"
+    exit_line = sum(c for _, c in closes[-STRATEGY_EXIT_MA:]) / STRATEGY_EXIT_MA * (1 - STRATEGY_EXIT_BAND)
+    if closes[-1][1] < exit_line:
+        return f"指數在出場線 {exit_line:,.0f} 之下（空頭；研究 105：14 筆、勝率 64%、每筆 -0.3%，抱 10 天 -2.1%）"
+    return None
+
+
 def alert_lines(date: str, retry: bool) -> list:
     if wait_for(turnover, date, retry) is None:
         return []
@@ -551,16 +566,20 @@ def alert_lines(date: str, retry: bool) -> list:
     px, prev = closes[-1][1], closes[-2][1]
     if not (vr >= OVERLAY_K and px < prev):
         return []
-    on_now = strategy_state(closes, heat_series(load_margin_ratio()))[0]
+    heat = heat_series(load_margin_ratio())
+    on_now = strategy_state(closes, heat)[0]
+    skip = short_skip(closes, heat, date)
     lines = [f"爆量收黑：成交金額 {amt[date] / 1e8:,.0f} 億＝20 日均 {vr:.2f} 倍（門檻 {OVERLAY_K}），指數 {px:,.0f}（{px / prev - 1:+.2%}）",
              "⏰ 操作時間：今天 15:00 夜盤開盤進場最好（研究 63d 每筆約 +1.6%）；來不及就明早 8:45 開盤（約 +1.1%）；"
              "明天收盤才進只剩約 +0.4%，就不要追了",
-             f"🎯 獨立短線：買台指期近月（小額），抱 {SHORT_HOLD} 個交易日後收盤平倉，停損 {SHORT_STOP:.0%}（約指數 {px * (1 - SHORT_STOP):,.0f}）"]
+             (f"⛔ 獨立短線建議跳過：{skip}" if skip else
+              f"🎯 獨立短線：買台指期近月（小額），抱 {SHORT_HOLD} 個交易日後收盤平倉，停損 {SHORT_STOP:.0%}（約指數 {px * (1 - SHORT_STOP):,.0f}）"
+              "；多頭且融資正常時歷史 33 筆、勝率 91%、每筆 +1.65%（研究 105）")]
     if on_now:
         lines.append(f"🔔 主策略在場：再加台指期 0.5～1 倍名目，抱 {OVERLAY_H} 個交易日（研究 64b）；主策略出場就一起平")
     else:
-        lines.append("主策略空手：只做獨立短線，主策略不加碼（研究 64）")
-    lines.append("（融資要 21:00 才公布，主策略的融資過熱判斷看 21:30 日報）")
+        lines.append("主策略空手：主策略不加碼（研究 64）" + ("，獨立短線也跳過 → 今天不動作" if skip else "，只做獨立短線"))
+    lines.append("（融資要 21:00 才公布，這裡用前一天的融資判斷過熱；若 21:30 日報改說「融資過熱、建議跳過」，夜盤已買的可明早開盤平掉）")
     return lines
 
 

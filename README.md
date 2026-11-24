@@ -1,6 +1,6 @@
 # tw-stock-tg
 
-每個交易日 21:30（台灣時間）用 GitHub Actions 把台股日報傳到 Telegram，並附上一套正2 波段策略的訊號。另外包含策略研究的回測程式與研究紀錄。
+每個交易日 21:30（台灣時間）用 GitHub Actions 把台股日報傳到 Telegram，並附上一套正2 波段策略的訊號；收盤後 14:40 若出現「爆量收黑」另外提醒（趕 15:00 夜盤）。另外包含策略研究的回測程式與研究紀錄。
 
 > 研究回測不代表未來報酬，也不是投資建議。
 
@@ -33,7 +33,7 @@
 report.py                  日報主程式（只用 Python 標準函式庫）
 data/*.csv                 快取：taiex_daily、taiex_hourly、pcratio、margin_ratio（每次只抓當天／當月，Actions 跑完 commit 回來）
 .github/workflows/
-  report.yml               每個交易日 21:30 跑日報並存回 data/
+  report.yml               每個交易日 21:30 跑日報並存回 data/；14:40 爆量收黑提醒（觸發才送）
   tg-relay.yml             research/outbox/ 有新檔就代發到 Telegram（雲端研究環境連不到 Telegram 時用）
   tg-inbox.yml             每 10 分鐘把使用者傳給 bot 的訊息存到 research/inbox/
 research/

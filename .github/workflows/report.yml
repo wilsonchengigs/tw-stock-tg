@@ -4,10 +4,12 @@ on:
     # GitHub 用 UTC；週一到週五台灣 21:30 一次寄全部（融資資料約 21:00 才公布）。
     # 排程可能延遲幾分鐘到半小時，資料還沒出來時程式會自己等
     - cron: '30 13 * * 1-5'
+    # 台灣 14:40 收盤後提醒（REPORT_PART=alert）：只有「爆量收黑」觸發才送，讓台指期能趕 15:00 夜盤開盤
+    - cron: '40 6 * * 1-5'
   workflow_dispatch:
     inputs:
       part:
-        description: 'close＝大盤＋三大法人、margin＝融資維持率、all＝全部'
+        description: 'close＝大盤＋三大法人、margin＝融資維持率、all＝全部、alert＝收盤後爆量收黑提醒（沒觸發不送）'
         required: false
         default: 'all'
       date:
@@ -28,7 +30,7 @@ jobs:
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          REPORT_PART: ${{ inputs.part || 'all' }}
+          REPORT_PART: ${{ inputs.part || (github.event.schedule == '40 6 * * 1-5' && 'alert' || 'all') }}
           REPORT_DATE: ${{ inputs.date }}
 
       # data/ 有新增才 commit；過去的資料不會變，下次只抓當天／當月

@@ -250,6 +250,9 @@ HEAT_Z = 2.0
 # 過熱出場後的回補（2026-11-24 加入，研究 81）：因過熱而出場的那段空手期，偏離降到 HEAT_REENTRY 以下、
 # 且指數仍在出場線（MA80×0.975）之上就回補，不必等 MA60×1.01。回測全期 23.2%→23.7%、後段與真實價格都提高、回檔不變
 HEAT_REENTRY = 0.125
+# 融資過熱每天檢查（2026-11-24 加入，研究 90）：持有中任一天過熱就出場；價格進出場與回補仍每週五判斷。
+# 回測全期 25.2%→27.6%、回檔 -37.1%→-33.1%，鄰近 9 組全期都提高；2015 後真實價格好壞參半
+HEAT_DAILY = True
 _TODAY_MARGIN = {}  # margin_lines 抓到的當天融資餘額，給策略段落存檔用
 
 
@@ -325,12 +328,16 @@ def strategy_state(closes: list, heat: dict = None):
             datetime.strptime(d, "%Y%m%d").isocalendar()[:2]
             != datetime.strptime(closes[i + 1][0], "%Y%m%d").isocalendar()[:2]
         )
+        dev = heat_on(heat, d) if heat else None
+        hot = is_hot(dev)
+        if state and hot and HEAT_DAILY:
+            # 融資過熱每天檢查（研究 90）：任一天過熱就出場（下一個交易日收盤賣），不必等週五
+            state, switched, heat_out = False, d, True
+            continue
         if not last_of_week:
             continue
         if i == len(closes) - 1 and datetime.strptime(d, "%Y%m%d").weekday() != 4:
-            continue  # 今天不是週五：這週還沒結束，不判斷
-        dev = heat_on(heat, d) if heat else None
-        hot = is_hot(dev)
+            continue  # 今天不是週五：這週還沒結束，價格規則不判斷
         above_exit = px >= ma_x * (1 - STRATEGY_EXIT_BAND)
         if not state:
             if heat_out and not above_exit:
@@ -356,7 +363,7 @@ def strategy_lines(date: str) -> list:
     px = closes[-1][1]
     up, dn = ma_n * (1 + STRATEGY_ENTRY_BAND), ma_x * (1 - STRATEGY_EXIT_BAND)
     is_friday = datetime.strptime(date, "%Y%m%d").weekday() == 4
-    lines = ["", f"🧭 策略（進場 MA{STRATEGY_ENTRY_MA}+{STRATEGY_ENTRY_BAND * 100:g}%、出場 MA{STRATEGY_EXIT_MA}-{STRATEGY_EXIT_BAND * 100:g}%，每週五收盤判斷）"]
+    lines = ["", f"🧭 策略（進場 MA{STRATEGY_ENTRY_MA}+{STRATEGY_ENTRY_BAND * 100:g}%、出場 MA{STRATEGY_EXIT_MA}-{STRATEGY_EXIT_BAND * 100:g}%，每週五收盤判斷；融資過熱每天檢查）"]
     lines.append(f"指數 {px:,.0f}｜進場線 {up:,.0f}（MA{STRATEGY_ENTRY_MA} {ma_n:,.0f}）｜出場線 {dn:,.0f}（MA{STRATEGY_EXIT_MA} {ma_x:,.0f}）")
     hold = STRATEGY_ON if state else STRATEGY_OFF
     since = f"（{int(switched[4:6])}/{int(switched[6:])} 起）" if switched else ""
@@ -367,7 +374,9 @@ def strategy_lines(date: str) -> list:
         status = "🔥 過熱：出場、不進場" if is_hot(dev) else "正常"
         lines.append(f"融資過熱濾網：融資÷指數 比 {HEAT_N} 日平均 {dev[0]:+.1%}（門檻 +{HEAT_TH:.1%}）、z {dev[1]:+.2f}（門檻 {HEAT_Z:g}）→ {status}{stale}")
     lines.append(f"應持有：{hold}{since}")
-    if is_friday and switched == date:
+    if switched == date and not state and not is_friday:
+        lines.append(f"⚠️ 融資過熱（每日檢查）：下一個交易日收盤 全部賣出 → {STRATEGY_OFF}")
+    elif is_friday and switched == date:
         action = f"買進 → {STRATEGY_ON}" if state else f"全部賣出 → {STRATEGY_OFF}"
         lines.append(f"⚠️ 本週訊號切換：下一個交易日收盤 {action}")
     elif is_friday:

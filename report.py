@@ -475,7 +475,12 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
             lines.append("　結算日或次日：未平倉變化含到期部位，研究 79 顯示此時訊號不可靠，不採用")
         return lines
     if z > FOREIGN_Z:
-        lines.append("🎯 獨立短線（研究 73b，2018～ 只有 8 年、小額）：明早開盤做多台指期近月，抱 1 個交易日收盤平倉（歷史勝率約 59%、每筆約 +68 點）")
+        skip = short_skip(closes, heat, date)
+        if skip:
+            lines.append(f"⛔ 外資回補短線（研究 106）建議跳過：{skip.split('（')[0]}（研究 106：空頭時抱 5 天每筆 -1.9%）")
+        else:
+            lines.append("🎯 獨立短線（研究 106，2019～ 只有 7 年、小額）：明早 8:45 開盤做多台指期近月，抱 5 個交易日後收盤平倉"
+                         "（多頭時歷史 57 筆、勝率 81%、每筆 +1.29%；前後段都正。抱 1 天在 2023 後已無效）")
         lines.append("　外資大回補／加多：歷史上之後 1～10 天偏強" + ("；研究 75／79 回測：在場時明早開盤加 1 倍台指期抱 5 天較好（未經同意，不算規則）" if on_now else ""))
     elif z < -FOREIGN_Z:
         lines.append("　外資大加空：歷史上之後 1～10 天偏弱（研究 79：排除結算日後，在場時「減碼」已無明顯好處，僅供參考）")

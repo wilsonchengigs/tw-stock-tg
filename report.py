@@ -358,9 +358,77 @@ def strategy_lines(date: str) -> list:
         word_ = "站上" if not state else "跌破"
         lines.append(f"週五收盤{word_} {need:,.0f} 才切換（目前距離 {(need / px - 1):+.1%}）")
     try:
+        lines += overlay_lines(date, closes, heat)
+    except Exception as e:  # 加碼段落失敗不影響策略段落
+        print(f"加碼訊號失敗：{e}", file=sys.stderr)
+    try:
         lines += pc_lines(date, state, closes)
     except Exception as e:  # 觀察指標抓不到不影響策略段落
         print(f"P/C 失敗：{e}", file=sys.stderr)
+    return lines
+
+
+# ── 在場時爆量收黑加碼（研究 63～64g，2026-11-24 使用者同意加入）──────────────────
+# 現行策略在場（持有正2）時，證交所成交金額 ≥ 前 20 個交易日平均 × OVERLAY_K 且加權指數收黑 →
+# 當晚 15:00 夜盤起加台指期 0.5～1 倍名目（資金 × 0.5～1），抱 OVERLAY_H 個交易日後收盤平倉；現行策略出場則一起平。
+# 回測 2002–2026：加 1x 抱 10 天 23.2%→26.9%（回檔 -36.8%→-39.7%）；真實價格 2015–2026 34.3%→39.7%；
+# 勝過「在場日隨機加碼」p 0.005；拔靴 P(回檔<-50%) 66%→69%；鄰近參數 46/50 組通過。3% 停損可選（影響很小）
+OVERLAY_K, OVERLAY_H = 1.5, 10
+
+
+def turnover_series(date: str, months: int = 3) -> list:
+    """[(YYYYMMDD, 成交金額)]，往前 months 個月（FMTQIK 每月一張表；get_json 有快取）"""
+    out = {}
+    y, m = int(date[:4]), int(date[4:6])
+    for _ in range(months):
+        d = get_json(f"https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date={y}{m:02d}01&response=json")
+        for t in tables_of(d):
+            f = t.get("fields", [])
+            if "日期" in f and "成交金額" in f:
+                idate, iamt = f.index("日期"), f.index("成交金額")
+                for r in t.get("data", []):
+                    yy, mm, dd = str(r[idate]).strip().split("/")
+                    out[f"{int(yy) + 1911}{int(mm):02d}{int(dd):02d}"] = num(r[iamt])
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    return sorted((k, v) for k, v in out.items() if k <= date)
+
+
+def overlay_lines(date: str, closes: list, heat: dict) -> list:
+    amt = dict(turnover_series(date))
+    cdict = dict(closes)
+    days = [d for d, _ in closes if d in amt]
+    if len(days) < 22 or days[-1] != date:
+        return []
+
+    def signal(j):
+        base = sum(amt[days[k]] for k in range(j - 20, j)) / 20
+        return amt[days[j]] / base, cdict[days[j]] < cdict[days[j - 1]]
+
+    n = len(days)
+    vr, down = signal(n - 1)
+    on_now = strategy_state(closes, heat)[0]
+    lines = ["", f"⚡ 爆量收黑加碼（研究 64b）：今日成交金額 {amt[date] / 1e8:,.0f} 億＝20 日均量 {vr:.2f} 倍"
+                 f"（門檻 {OVERLAY_K} 倍且收黑；下一交易日約需 ≥ {sum(amt[days[k]] for k in range(n - 20, n)) / 20 * OVERLAY_K / 1e8:,.0f} 億）"]
+    # 近 OVERLAY_H 個交易日內、當時在場的訊號 → 加碼持有中
+    active = None
+    for j in range(max(21, n - 1 - OVERLAY_H), n - 1):
+        r, dn = signal(j)
+        if r >= OVERLAY_K and dn and strategy_state([c for c in closes if c[0] <= days[j]], heat)[0]:
+            active = j
+    if vr >= OVERLAY_K and down:
+        if on_now:
+            lines.append(f"🔔 加碼訊號成立：今晚夜盤（或明早開盤）加台指期 0.5～1 倍名目（資金 × 0.5～1；資金 200 萬 ≈ 小台 1 口或微台 5 口），"
+                         f"抱 {OVERLAY_H} 個交易日後收盤平倉；現行策略出場則一起平；3% 停損可選")
+        else:
+            lines.append("今日爆量收黑，但現行策略空手：依研究 64，空手時加碼沒有幫助，不動作")
+    elif active is not None and on_now:
+        held = n - 1 - active
+        lines.append(f"加碼持有中：{int(days[active][4:6])}/{int(days[active][6:])} 的訊號，已過 {held}/{OVERLAY_H} 個交易日"
+                     + ("，今天收盤平倉" if held >= OVERLAY_H else ""))
+    elif active is not None and not on_now:
+        lines.append("現行策略已出場：加碼部位應一起平倉")
     return lines
 
 

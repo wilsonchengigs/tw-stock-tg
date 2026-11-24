@@ -460,11 +460,21 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
     sd = (sum((x - m_) ** 2 for x in hist) / len(hist)) ** 0.5
     z = (deltas[-1] - m_) / sd if sd > 0 else 0.0
     on_now = strategy_state(closes, heat)[0]
-    lines = [f"📊 外資台指期（觀察，研究 73／75，未納入規則）：淨未平倉 {net[-1][1]:+,.0f} 口，今日變化 {deltas[-1]:+,.0f} 口（z {z:+.2f}，門檻 ±{FOREIGN_Z}）"]
+    lines = [f"📊 外資台指期（觀察，研究 73／75／79，未納入規則）：淨未平倉 {net[-1][1]:+,.0f} 口，今日變化 {deltas[-1]:+,.0f} 口（z {z:+.2f}，門檻 ±{FOREIGN_Z}）"]
+
+    def third_wed(d):
+        x = datetime.strptime(d, "%Y%m%d")
+        return x.weekday() == 2 and 15 <= x.day <= 21
+    prev = net[-2][0]
+    if third_wed(date) or third_wed(prev):
+        # 研究 79：結算日（第三個星期三）與次日的未平倉變化含到期部位消失，訊號不採用
+        if abs(z) > FOREIGN_Z:
+            lines.append("　結算日或次日：未平倉變化含到期部位，研究 79 顯示此時訊號不可靠，不採用")
+        return lines
     if z > FOREIGN_Z:
-        lines.append("　外資大回補／加多：歷史上之後 1～10 天偏強" + ("；研究 75 回測：在場時明早開盤加 1 倍台指期抱 5 天較好（未經同意，不算規則）" if on_now else ""))
+        lines.append("　外資大回補／加多：歷史上之後 1～10 天偏強" + ("；研究 75／79 回測：在場時明早開盤加 1 倍台指期抱 5 天較好（未經同意，不算規則）" if on_now else ""))
     elif z < -FOREIGN_Z:
-        lines.append("　外資大加空：歷史上之後 1～10 天偏弱" + ("；研究 75 回測：在場時明早開盤空 1 口台指期（降到 1 倍）5 天較好（未經同意，不算規則）" if on_now else ""))
+        lines.append("　外資大加空：歷史上之後 1～10 天偏弱（研究 79：排除結算日後，在場時「減碼」已無明顯好處，僅供參考）")
     return lines
 
 

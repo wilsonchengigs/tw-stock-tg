@@ -1,0 +1,26 @@
+# 雲端研究排程連不到 api.telegram.org，改成把報告 commit 到 research/outbox/，由這裡代發
+name: tg-relay
+on:
+  push:
+    branches: [main]
+    paths: ['research/outbox/**']
+permissions:
+  contents: read
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 傳送新增的報告
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if git cat-file -e "$BEFORE" 2>/dev/null; then range="$BEFORE..HEAD"; else range="HEAD~1..HEAD"; fi
+          git diff --name-only --diff-filter=A "$range" -- research/outbox | sort | while read -r f; do
+            echo "send $f"
+            python -X utf8 research/tg_send.py < "$f"
+          done

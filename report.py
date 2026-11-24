@@ -244,6 +244,9 @@ STRATEGY_OFF = "100% 現金（或定存）"
 # → 週五判斷時出場且不進場。回測 2002～2026：全期 23.2%／-36.8%（無濾網 20.2%／-43.6%），前段、後段、真實價格都較好；
 # 鄰近參數 14／18 組顯著、安慰劑 p≈0.01。歷史資料存在 data/margin_ratio.csv（每天抓到融資餘額就追加一列）
 HEAT_N, HEAT_TH = 250, 0.175
+# 過熱出場後的回補（2026-11-24 加入，研究 81）：因過熱而出場的那段空手期，偏離降到 HEAT_REENTRY 以下、
+# 且指數仍在出場線（MA80×0.975）之上就回補，不必等 MA60×1.01。回測全期 23.2%→23.7%、後段與真實價格都提高、回檔不變
+HEAT_REENTRY = 0.125
 _TODAY_MARGIN = {}  # margin_lines 抓到的當天融資餘額，給策略段落存檔用
 
 
@@ -301,7 +304,7 @@ def heat_on(heat: dict, d: str):
 def strategy_state(closes: list, heat: dict = None):
     """依每週最後一個交易日的收盤跑一遍，回傳 (目前狀態, 上次切換日, 今天的出場均線, 今天的進場均線)
     heat：融資過熱偏離（heat_series）；過熱時出場且不進場"""
-    state, switched = False, None
+    state, switched, heat_out = False, None, False
     ma_x = ma_n = None
     need = max(STRATEGY_EXIT_MA, STRATEGY_ENTRY_MA)
     for i, (d, px) in enumerate(closes):
@@ -319,10 +322,17 @@ def strategy_state(closes: list, heat: dict = None):
             continue  # 今天不是週五：這週還沒結束，不判斷
         dev = heat_on(heat, d) if heat else None
         hot = dev is not None and dev > HEAT_TH
-        if not state and px > ma_n * (1 + STRATEGY_ENTRY_BAND) and not hot:
-            state, switched = True, d
-        elif state and (px < ma_x * (1 - STRATEGY_EXIT_BAND) or hot):
-            state, switched = False, d
+        above_exit = px >= ma_x * (1 - STRATEGY_EXIT_BAND)
+        if not state:
+            if heat_out and not above_exit:
+                heat_out = False  # 過熱空手期間已跌破出場線：回到一般進場規則
+            cooled = dev is None or dev < HEAT_REENTRY
+            if (px > ma_n * (1 + STRATEGY_ENTRY_BAND) and not hot) or (heat_out and cooled and above_exit):
+                state, switched, heat_out = True, d, False
+        elif hot:
+            state, switched, heat_out = False, d, True
+        elif not above_exit:
+            state, switched, heat_out = False, d, False
     return state, switched, ma_x, ma_n
 
 

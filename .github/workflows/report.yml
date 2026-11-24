@@ -18,7 +18,7 @@ jobs:
   report:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 把新增的小時 K 存回 data/taiex_hourly.csv
+      contents: write  # 把新抓的資料（小時 K、日收盤、融資、P/C）存回 data/，下次只抓新的
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,11 +31,11 @@ jobs:
           REPORT_PART: ${{ inputs.part || 'all' }}
           REPORT_DATE: ${{ inputs.date }}
 
-      # 小時 K 資料檔有新增才 commit；下次只要補當天那 5 根
-      - name: 存回小時 K 資料
+      # data/ 有新增才 commit；過去的資料不會變，下次只抓當天／當月
+      - name: 存回資料快取
         if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/taiex_hourly.csv
-          git diff --cached --quiet || (git commit -m "小時K 資料更新" && git push)
+          git add data/*.csv
+          git diff --cached --quiet || (git commit -m "資料快取更新" && git push)

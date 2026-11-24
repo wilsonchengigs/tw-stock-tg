@@ -5,6 +5,8 @@
 - 晚上（REPORT_PART=margin）：大盤（上市）融資維持率、融資餘額增減（約 21:00 公布）、外資台指期淨未平倉（期交所）
 - REPORT_PART=all（預設，排程用這個）：兩段一起
 - 策略段落後附「觀察」：台指選擇權 Put/Call 未平倉比與研究 32 的提早進場條件（期交所，僅供觀察、未納入策略）
+- 加快速度：過去的資料存在 data/（taiex_daily、pcratio、margin_ratio、taiex_hourly），每次只抓當天／當月，
+  GitHub Actions 跑完把 data/*.csv commit 回來
 
 融資維持率 = Σ(個股融資餘額張數 × 1000 × 收盤價) ÷ 融資餘額總金額（證交所不直接公布，一般網站也是這樣估算）
 
@@ -27,12 +29,52 @@ RETRY_TIMES = 6
 RETRY_WAIT_SEC = 300
 
 
+_JSON_MEMO = {}  # 同一次執行裡同一個網址只抓一次（例如當月 FMTQIK 成交量與指數都要用）
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+
 def get_json(url: str) -> dict:
+    if url in _JSON_MEMO:
+        return _JSON_MEMO[url]
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=30) as res:
         data = json.loads(res.read().decode("utf-8"))
     time.sleep(2)  # 證交所對短時間大量請求會擋，間隔一下
+    if data.get("stat") == "OK":
+        _JSON_MEMO[url] = data
     return data
+
+
+def load_csv(name: str) -> dict:
+    """data/{name}：第一欄日期 YYYYMMDD → 其餘欄位（字串）"""
+    path = os.path.join(DATA_DIR, name)
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        lines = [ln.strip().split(",") for ln in f.readlines()[1:] if ln.strip()]
+    return {r[0]: r[1:] for r in lines}
+
+
+def save_csv(name: str, header: str, rows: dict):
+    with open(os.path.join(DATA_DIR, name), "w", encoding="utf-8", newline="") as f:
+        f.write(header + "\n")
+        for d in sorted(rows):
+            f.write(",".join([d] + [str(x) for x in rows[d]]) + "\n")
+
+
+def months_to_fetch(date: str, have: dict, max_months: int) -> list:
+    """要重抓的月份（YYYYMM）：當月一定抓；之前的月份只有在快取缺資料時才抓（最多往回 max_months 個月）"""
+    first = datetime.strptime(date[:6] + "01", "%Y%m%d")
+    out = [first.strftime("%Y%m")]
+    last_have = max(have) if have else "00000000"
+    cur = first
+    for _ in range(max_months - 1):
+        cur = (cur - timedelta(days=1)).replace(day=1)
+        month_end = (cur.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        if last_have >= month_end.strftime("%Y%m%d"):
+            break  # 快取已經涵蓋這個月（之前的月份更早，也都有）
+        out.append(cur.strftime("%Y%m"))
+    return out
 
 
 def num(s) -> float:
@@ -198,17 +240,17 @@ STRATEGY_EXIT_MA, STRATEGY_EXIT_BAND = 80, 0.025
 STRATEGY_ENTRY_MA, STRATEGY_ENTRY_BAND = 60, 0.01
 STRATEGY_ON = "100% 00631L（台灣50正2）"
 STRATEGY_OFF = "100% 現金（或定存）"
+# 融資過熱濾網（2026-11-24 加入，研究 38／38b／40）：上市融資金額 ÷ 加權指數 高於近 250 個交易日平均 17.5% 以上
+# → 週五判斷時出場且不進場。回測 2002～2026：全期 23.2%／-36.8%（無濾網 20.2%／-43.6%），前段、後段、真實價格都較好；
+# 鄰近參數 14／18 組顯著、安慰劑 p≈0.01。歷史資料存在 data/margin_ratio.csv（每天抓到融資餘額就追加一列）
+HEAT_N, HEAT_TH = 250, 0.175
+_TODAY_MARGIN = {}  # margin_lines 抓到的當天融資餘額，給策略段落存檔用
 
 
 def taiex_daily(date: str, months: int = 14) -> list:
-    """加權指數日收盤 [(YYYYMMDD, 收盤)]，往前抓 months 個月（證交所 FMTQIK，每月一張表）"""
-    out = []
-    first = datetime.strptime(date[:6] + "01", "%Y%m%d")
-    yms = []
-    for _ in range(months):
-        yms.append(first.strftime("%Y%m"))
-        first = (first - timedelta(days=1)).replace(day=1)
-    for ym in reversed(yms):
+    """加權指數日收盤 [(YYYYMMDD, 收盤)]，往前 months 個月。歷史存在 data/taiex_daily.csv，只重抓當月（與快取缺的月份）"""
+    cache = {d: float(v[0]) for d, v in load_csv("taiex_daily.csv").items()}
+    for ym in months_to_fetch(date, cache, months):
         d = get_json(f"https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date={ym}01&response=json")
         for t in tables_of(d):
             f = t.get("fields", [])
@@ -216,12 +258,49 @@ def taiex_daily(date: str, months: int = 14) -> list:
                 idate, iv = f.index("日期"), f.index("發行量加權股價指數")
                 for r in t.get("data", []):
                     y, m, dd = str(r[idate]).strip().split("/")
-                    out.append((f"{int(y) + 1911}{int(m):02d}{int(dd):02d}", num(r[iv])))
-    return [x for x in out if x[0] <= date]
+                    cache[f"{int(y) + 1911}{int(m):02d}{int(dd):02d}"] = num(r[iv])
+    save_csv("taiex_daily.csv", "date,close", {k: [f"{v:.2f}"] for k, v in cache.items()})
+    start = (datetime.strptime(date[:6] + "01", "%Y%m%d") - timedelta(days=31 * (months - 1))).strftime("%Y%m01")
+    return sorted((k, v) for k, v in cache.items() if start <= k <= date)
 
 
-def strategy_state(closes: list):
-    """依每週最後一個交易日的收盤跑一遍，回傳 (目前狀態, 上次切換日, 今天的出場均線, 今天的進場均線)"""
+def load_margin_ratio() -> list:
+    """[(YYYYMMDD, 融資金額, 加權指數)]，依日期排序（data/margin_ratio.csv 另有第 4 欄融資維持率，可能空白）"""
+    return sorted((d, float(v[0]), float(v[1])) for d, v in load_csv("margin_ratio.csv").items())
+
+
+def save_margin_ratio(date: str, amount: float, taiex_close: float, maint=None):
+    rows = load_csv("margin_ratio.csv")
+    rows[date] = [str(int(amount)), f"{taiex_close:.2f}", f"{maint:.2f}" if maint is not None else ""]
+    rows = {d: (v + [""])[:3] for d, v in rows.items()}
+    save_csv("margin_ratio.csv", "date,amount,taiex,maint", rows)
+
+
+def cached_maint(date: str):
+    """data/margin_ratio.csv 裡某天的融資維持率；沒存過回 None"""
+    v = load_csv("margin_ratio.csv").get(date)
+    return float(v[2]) if v and len(v) > 2 and v[2] else None
+
+
+def heat_series(rows: list) -> dict:
+    """{YYYYMMDD: 融資/指數 比值 相對近 HEAT_N 日平均的偏離}"""
+    ratio = [a / t for _, a, t in rows]
+    out = {}
+    for i in range(HEAT_N - 1, len(rows)):
+        avg = sum(ratio[i + 1 - HEAT_N:i + 1]) / HEAT_N
+        out[rows[i][0]] = ratio[i] / avg - 1
+    return out
+
+
+def heat_on(heat: dict, d: str):
+    """d 當天（沒有就用之前最近一天）的偏離；完全沒資料回 None"""
+    keys = [k for k in heat if k <= d]
+    return heat[max(keys)] if keys else None
+
+
+def strategy_state(closes: list, heat: dict = None):
+    """依每週最後一個交易日的收盤跑一遍，回傳 (目前狀態, 上次切換日, 今天的出場均線, 今天的進場均線)
+    heat：融資過熱偏離（heat_series）；過熱時出場且不進場"""
     state, switched = False, None
     ma_x = ma_n = None
     need = max(STRATEGY_EXIT_MA, STRATEGY_ENTRY_MA)
@@ -238,9 +317,11 @@ def strategy_state(closes: list):
             continue
         if i == len(closes) - 1 and datetime.strptime(d, "%Y%m%d").weekday() != 4:
             continue  # 今天不是週五：這週還沒結束，不判斷
-        if not state and px > ma_n * (1 + STRATEGY_ENTRY_BAND):
+        dev = heat_on(heat, d) if heat else None
+        hot = dev is not None and dev > HEAT_TH
+        if not state and px > ma_n * (1 + STRATEGY_ENTRY_BAND) and not hot:
             state, switched = True, d
-        elif state and px < ma_x * (1 - STRATEGY_EXIT_BAND):
+        elif state and (px < ma_x * (1 - STRATEGY_EXIT_BAND) or hot):
             state, switched = False, d
     return state, switched, ma_x, ma_n
 
@@ -249,7 +330,10 @@ def strategy_lines(date: str) -> list:
     closes = taiex_daily(date)
     if len(closes) < max(STRATEGY_EXIT_MA, STRATEGY_ENTRY_MA) + 5 or closes[-1][0] != date:
         return []
-    state, switched, ma_x, ma_n = strategy_state(closes)
+    if _TODAY_MARGIN.get("date") == date:
+        save_margin_ratio(date, _TODAY_MARGIN["amount"], closes[-1][1], _TODAY_MARGIN.get("ratio"))
+    heat = heat_series(load_margin_ratio())
+    state, switched, ma_x, ma_n = strategy_state(closes, heat)
     px = closes[-1][1]
     up, dn = ma_n * (1 + STRATEGY_ENTRY_BAND), ma_x * (1 - STRATEGY_EXIT_BAND)
     is_friday = datetime.strptime(date, "%Y%m%d").weekday() == 4
@@ -257,6 +341,12 @@ def strategy_lines(date: str) -> list:
     lines.append(f"指數 {px:,.0f}｜進場線 {up:,.0f}（MA{STRATEGY_ENTRY_MA} {ma_n:,.0f}）｜出場線 {dn:,.0f}（MA{STRATEGY_EXIT_MA} {ma_x:,.0f}）")
     hold = STRATEGY_ON if state else STRATEGY_OFF
     since = f"（{int(switched[4:6])}/{int(switched[6:])} 起）" if switched else ""
+    dev = heat_on(heat, date)
+    if dev is not None:
+        last = max(k for k in heat if k <= date)
+        stale = "" if last == date else f"（用 {int(last[4:6])}/{int(last[6:])} 的融資資料）"
+        status = "🔥 過熱：出場、不進場" if dev > HEAT_TH else "正常"
+        lines.append(f"融資過熱濾網：融資÷指數 比 {HEAT_N} 日平均 {dev:+.1%}（門檻 +{HEAT_TH:.1%}）→ {status}{stale}")
     lines.append(f"應持有：{hold}{since}")
     if is_friday and switched == date:
         action = f"買進 → {STRATEGY_ON}" if state else f"全部賣出 → {STRATEGY_OFF}"
@@ -281,25 +371,25 @@ PC_PCT, PC_LOOKBACK, PC_REBOUND = 0.95, 10, 0.03
 
 
 def pc_ratio_history(date: str, months: int = 13) -> list:
-    """期交所台指選擇權 Put/Call 未平倉比（%）[(YYYYMMDD, 比率)]；期交所一次只能查一個月左右，所以逐月抓"""
+    """期交所台指選擇權 Put/Call 未平倉比（%）[(YYYYMMDD, 比率)]。歷史存在 data/pcratio.csv，只重抓當月（期交所一次只能查一個月）"""
+    cache = {d: float(v[0]) for d, v in load_csv("pcratio.csv").items()}
     end = datetime.strptime(date, "%Y%m%d")
-    rows = {}
-    y, m = end.year, end.month
-    for _ in range(months):
-        start = f"{y}/{m:02d}/01"
+    for ym in months_to_fetch(date, cache, months):
+        y, m = int(ym[:4]), int(ym[4:])
         month_end = datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
-        stop = min(end, month_end).strftime("%Y/%m/%d")
-        body = urllib.parse.urlencode({"queryStartDate": start, "queryEndDate": stop}).encode()
+        body = urllib.parse.urlencode({"queryStartDate": f"{y}/{m:02d}/01",
+                                       "queryEndDate": min(end, month_end).strftime("%Y/%m/%d")}).encode()
         req = urllib.request.Request("https://www.taifex.com.tw/cht/3/pcRatioDown", data=body, headers=UA)
         with urllib.request.urlopen(req, timeout=30) as res:
             text = res.read().decode("big5", errors="replace")
         for ln in text.strip().splitlines()[1:]:
             r = ln.split(",")
             if len(r) >= 7 and r[0].count("/") == 2:
-                rows[r[0].replace("/", "")] = num(r[6])
+                cache[r[0].replace("/", "")] = num(r[6])
         time.sleep(1)
-        y, m = (y - 1, 12) if m == 1 else (y, m - 1)
-    return sorted(rows.items())
+    save_csv("pcratio.csv", "date,oi_ratio", {k: [f"{v:.2f}"] for k, v in cache.items()})
+    start = (end - timedelta(days=31 * months)).strftime("%Y%m%d")
+    return sorted((k, v) for k, v in cache.items() if start <= k <= date)
 
 
 def pc_lines(date: str, state: bool, closes: list) -> list:
@@ -431,7 +521,10 @@ def prev_trading_ratio(date: str):
         day -= timedelta(days=1)
         if day.weekday() >= 5:
             continue
-        r = margin_ratio(day.strftime("%Y%m%d"))
+        key = day.strftime("%Y%m%d")
+        r = cached_maint(key)  # 前一天的維持率日報已經算過並存檔，不用再抓整個市場
+        if r is None:
+            r = margin_ratio(key)
         if r is not None:
             return r
     return None
@@ -501,6 +594,8 @@ def oi_text(v: float) -> str:
 def margin_lines(date: str, retry: bool):
     lines = []
     m = wait_for(margin_data, date, retry)
+    if m is not None:
+        _TODAY_MARGIN.update(date=date, amount=m["amount"], ratio=m["ratio"])
     if m is None:
         lines.append("大盤融資維持率：資料還沒公布")
     else:

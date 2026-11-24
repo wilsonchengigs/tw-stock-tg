@@ -421,6 +421,11 @@ def overlay_lines(date: str, closes: list, heat: dict) -> list:
         if on_now:
             lines.append(f"🔔 加碼訊號成立：今晚夜盤（或明早開盤）加台指期 0.5～1 倍名目（資金 × 0.5～1；資金 200 萬 ≈ 小台 1 口或微台 5 口），"
                          f"抱 {OVERLAY_H} 個交易日後收盤平倉；現行策略出場則一起平；3% 停損可選")
+            # 觀察（研究 64i／64j，未納入規則）：離出場線 ≥5% 時加碼，真實價格回檔與不加碼相同、報酬幾乎不變
+            exit_line = sum(v for _, v in closes[-STRATEGY_EXIT_MA:]) / STRATEGY_EXIT_MA * (1 - STRATEGY_EXIT_BAND)
+            gap = cdict[date] / exit_line - 1
+            lines.append(f"　觀察：目前離出場線 {exit_line:,.0f} 還有 {gap:+.1%}"
+                         + ("（< 5%：研究 64i 顯示這種情況較易遇到隨即出場，保守者可改加 0.5 倍或不加）" if gap < 0.05 else "（≥ 5%：歷史上這類加碼勝率較高）"))
         else:
             lines.append("今日爆量收黑，但現行策略空手：依研究 64，空手時加碼沒有幫助，不動作")
     elif active is not None and on_now:

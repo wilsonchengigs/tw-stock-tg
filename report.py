@@ -4,6 +4,7 @@
 - 下午（REPORT_PART=close）：加權指數漲跌、小時K MA20／60／240（資料存在 data/taiex_hourly.csv）、成交量（成交金額）、三大法人買賣超（證交所約 15:00 公布）
 - 晚上（REPORT_PART=margin）：大盤（上市）融資維持率、融資餘額增減（約 21:00 公布）、外資台指期淨未平倉（期交所）
 - REPORT_PART=all（預設，排程用這個）：兩段一起
+- 策略段落後附「觀察」：台指選擇權 Put/Call 未平倉比與研究 32 的提早進場條件（期交所，僅供觀察、未納入策略）
 
 融資維持率 = Σ(個股融資餘額張數 × 1000 × 收盤價) ÷ 融資餘額總金額（證交所不直接公布，一般網站也是這樣估算）
 
@@ -266,6 +267,66 @@ def strategy_lines(date: str) -> list:
         need = up if not state else dn
         word_ = "站上" if not state else "跌破"
         lines.append(f"週五收盤{word_} {need:,.0f} 才切換（目前距離 {(need / px - 1):+.1%}）")
+    try:
+        lines += pc_lines(date, state, closes)
+    except Exception as e:  # 觀察指標抓不到不影響策略段落
+        print(f"P/C 失敗：{e}", file=sys.stderr)
+    return lines
+
+
+# ── 觀察指標：台指選擇權 Put/Call 未平倉比（研究 31、32，尚未納入策略）────────────
+# 空手時，近 10 個交易日內 P/C 未平倉比曾達「過去 250 日的 95 分位以上」，且收盤比近 10 日最低收盤高 3% 以上，
+# 回測（2002～2026）提早進場的效果最好：樣本外仍勝現行，安慰劑檢定 p≈0.05～0.10（邊緣顯著）。先放在日報觀察。
+PC_PCT, PC_LOOKBACK, PC_REBOUND = 0.95, 10, 0.03
+
+
+def pc_ratio_history(date: str, months: int = 13) -> list:
+    """期交所台指選擇權 Put/Call 未平倉比（%）[(YYYYMMDD, 比率)]；期交所一次只能查一個月左右，所以逐月抓"""
+    end = datetime.strptime(date, "%Y%m%d")
+    rows = {}
+    y, m = end.year, end.month
+    for _ in range(months):
+        start = f"{y}/{m:02d}/01"
+        month_end = datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
+        stop = min(end, month_end).strftime("%Y/%m/%d")
+        body = urllib.parse.urlencode({"queryStartDate": start, "queryEndDate": stop}).encode()
+        req = urllib.request.Request("https://www.taifex.com.tw/cht/3/pcRatioDown", data=body, headers=UA)
+        with urllib.request.urlopen(req, timeout=30) as res:
+            text = res.read().decode("big5", errors="replace")
+        for ln in text.strip().splitlines()[1:]:
+            r = ln.split(",")
+            if len(r) >= 7 and r[0].count("/") == 2:
+                rows[r[0].replace("/", "")] = num(r[6])
+        time.sleep(1)
+        y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+    return sorted(rows.items())
+
+
+def pc_lines(date: str, state: bool, closes: list) -> list:
+    hist = pc_ratio_history(date)
+    if len(hist) < 160 or hist[-1][0] != date:
+        return []
+    vals = [v for _, v in hist]
+
+    def pct(k):
+        prev = vals[max(0, k - 250):k]
+        return sum(1 for x in prev if x < vals[k]) / len(prev) if len(prev) >= 150 else None
+
+    today = pct(len(vals) - 1)
+    recent = [pct(k) for k in range(len(vals) - PC_LOOKBACK, len(vals))]
+    hot = any(p is not None and p >= PC_PCT for p in recent)
+    lines = ["", f"👀 觀察：台指選 P/C 未平倉比 {vals[-1]:.0f}%（過去一年第 {today * 100:.0f} 百分位）"]
+    if state:
+        return lines
+    lo = min(px for _, px in closes[-PC_LOOKBACK - 1:])
+    px = closes[-1][1]
+    if hot and px > lo * (1 + PC_REBOUND):
+        lines.append(f"⚡ 提早進場條件成立（近 {PC_LOOKBACK} 日 P/C 曾達前 5%＋從低點 {lo:,.0f} 反彈 {px / lo - 1:.1%}）；"
+                     f"僅供觀察，未納入策略（研究 32：停損 {lo:,.0f}）")
+    elif hot:
+        lines.append(f"P/C 近 {PC_LOOKBACK} 日曾達前 5%，等指數從低點 {lo:,.0f} 反彈 {PC_REBOUND:.0%}（{lo * (1 + PC_REBOUND):,.0f}）才算成立")
+    else:
+        lines.append(f"提早進場條件：P/C 達過去一年前 5%（目前未達）＋指數從近 {PC_LOOKBACK} 日低點反彈 {PC_REBOUND:.0%}")
     return lines
 
 

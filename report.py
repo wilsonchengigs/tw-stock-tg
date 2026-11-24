@@ -424,6 +424,51 @@ def turnover_series(date: str, months: int = 3) -> list:
 
 
 def overlay_lines(date: str, closes: list, heat: dict) -> list:
+    lines = _overlay_core(date, closes, heat)
+    try:
+        lines += foreign_fut_lines(date, closes, heat)
+    except Exception as e:  # 觀察段落失敗不影響其他段落
+        print(f"外資期貨觀察失敗：{e}", file=sys.stderr)
+    return lines
+
+
+# ── 觀察：外資台指期淨未平倉單日大變化（研究 73、75～75d，AI-1；**未納入規則，需使用者同意**）──────────
+# 外資淨未平倉單日變化相對過去 250 日 z > +1.5（大回補）／< −1.5（大加空）。研究 75（00631L＋台指期真實價，2018-06～2026-11，只有 8 年）：
+# 現行在場時「大回補 → 隔天開盤加 1x 抱 5 天、大加空 → 空 1x（降到 1x）5 天」43.0%／-37.2% → 60.4%／-34.6%，隨機對照 p 0.005
+FOREIGN_Z = 1.5
+
+
+def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
+    end = datetime.strptime(date, "%Y%m%d")
+    body = urllib.parse.urlencode({"queryStartDate": (end - timedelta(days=430)).strftime("%Y/%m/%d"),
+                                   "queryEndDate": end.strftime("%Y/%m/%d"), "commodityId": "TXF"}).encode()
+    req = urllib.request.Request("https://www.taifex.com.tw/cht/3/futContractsDateDown", data=body, headers=UA)
+    with urllib.request.urlopen(req, timeout=30) as res:
+        text = res.read().decode("big5", errors="replace")
+    net = []
+    for ln in text.splitlines()[1:]:
+        r = ln.split(",")
+        if len(r) >= 14 and "外資" in r[2]:
+            lo, sh = num(r[9]), num(r[11])
+            if lo or sh:  # 當天未平倉尚未公布時為 0
+                net.append((r[0].replace("/", ""), lo - sh))
+    if len(net) < 122 or net[-1][0] != date:
+        return []
+    deltas = [net[k][1] - net[k - 1][1] for k in range(1, len(net))]
+    hist = deltas[-251:-1]
+    m_ = sum(hist) / len(hist)
+    sd = (sum((x - m_) ** 2 for x in hist) / len(hist)) ** 0.5
+    z = (deltas[-1] - m_) / sd if sd > 0 else 0.0
+    on_now = strategy_state(closes, heat)[0]
+    lines = [f"📊 外資台指期（觀察，研究 73／75，未納入規則）：淨未平倉 {net[-1][1]:+,.0f} 口，今日變化 {deltas[-1]:+,.0f} 口（z {z:+.2f}，門檻 ±{FOREIGN_Z}）"]
+    if z > FOREIGN_Z:
+        lines.append("　外資大回補／加多：歷史上之後 1～10 天偏強" + ("；研究 75 回測：在場時明早開盤加 1 倍台指期抱 5 天較好（未經同意，不算規則）" if on_now else ""))
+    elif z < -FOREIGN_Z:
+        lines.append("　外資大加空：歷史上之後 1～10 天偏弱" + ("；研究 75 回測：在場時明早開盤空 1 口台指期（降到 1 倍）5 天較好（未經同意，不算規則）" if on_now else ""))
+    return lines
+
+
+def _overlay_core(date: str, closes: list, heat: dict) -> list:
     amt = dict(turnover_series(date))
     cdict = dict(closes)
     days = [d for d, _ in closes if d in amt]

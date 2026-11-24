@@ -1,5 +1,6 @@
+"""研究 09b：多市場分散的鄰近參數與逐年比較（用法：python -X utf8 backtest/research_09b_多市場鄰近參數.py）"""
 import importlib.util,sys,os
-os.chdir(r'C:\Users\wilsoncheng\Desktop\tw-stock-tg\backtest'); sys.path.insert(0,'.')
+HERE=os.path.dirname(os.path.abspath(__file__)); os.chdir(HERE); sys.path.insert(0,HERE)
 spec=importlib.util.spec_from_file_location('r9','research_09_多市場分散.py');r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 N,WE,ME=r.N,r.WE,r.ME
 def sig(leg,n,monthly):

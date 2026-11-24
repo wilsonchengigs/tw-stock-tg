@@ -244,6 +244,9 @@ STRATEGY_OFF = "100% 現金（或定存）"
 # → 週五判斷時出場且不進場。回測 2002～2026：全期 23.2%／-36.8%（無濾網 20.2%／-43.6%），前段、後段、真實價格都較好；
 # 鄰近參數 14／18 組顯著、安慰劑 p≈0.01。歷史資料存在 data/margin_ratio.csv（每天抓到融資餘額就追加一列）
 HEAT_N, HEAT_TH = 250, 0.175
+# z 分數（2026-11-24 加入，研究 85／85b）：比值偏離 ÷ 近 250 日標準差 > HEAT_Z 也算過熱（與上面的百分比門檻任一成立）。
+# 回測全期 23.2%→25.0%、前後段與真實價格都提高，真實價格回檔 -37.2%→-32.7%；250 日視窗下 z 1.5～3 都通過
+HEAT_Z = 2.0
 # 過熱出場後的回補（2026-11-24 加入，研究 81）：因過熱而出場的那段空手期，偏離降到 HEAT_REENTRY 以下、
 # 且指數仍在出場線（MA80×0.975）之上就回補，不必等 MA60×1.01。回測全期 23.2%→23.7%、後段與真實價格都提高、回檔不變
 HEAT_REENTRY = 0.125
@@ -286,19 +289,25 @@ def cached_maint(date: str):
 
 
 def heat_series(rows: list) -> dict:
-    """{YYYYMMDD: 融資/指數 比值 相對近 HEAT_N 日平均的偏離}"""
+    """{YYYYMMDD: (偏離, z)}：融資/指數 比值 相對近 HEAT_N 日平均的偏離，與 (比值−平均)÷標準差"""
     ratio = [a / t for _, a, t in rows]
     out = {}
     for i in range(HEAT_N - 1, len(rows)):
-        avg = sum(ratio[i + 1 - HEAT_N:i + 1]) / HEAT_N
-        out[rows[i][0]] = ratio[i] / avg - 1
+        w = ratio[i + 1 - HEAT_N:i + 1]
+        avg = sum(w) / HEAT_N
+        sd = (sum((v - avg) ** 2 for v in w) / HEAT_N) ** 0.5
+        out[rows[i][0]] = (ratio[i] / avg - 1, (ratio[i] - avg) / sd if sd else 0.0)
     return out
 
 
 def heat_on(heat: dict, d: str):
-    """d 當天（沒有就用之前最近一天）的偏離；完全沒資料回 None"""
+    """d 當天（沒有就用之前最近一天）的 (偏離, z)；完全沒資料回 None"""
     keys = [k for k in heat if k <= d]
     return heat[max(keys)] if keys else None
+
+
+def is_hot(v) -> bool:
+    return v is not None and (v[0] > HEAT_TH or v[1] > HEAT_Z)
 
 
 def strategy_state(closes: list, heat: dict = None):
@@ -321,12 +330,12 @@ def strategy_state(closes: list, heat: dict = None):
         if i == len(closes) - 1 and datetime.strptime(d, "%Y%m%d").weekday() != 4:
             continue  # 今天不是週五：這週還沒結束，不判斷
         dev = heat_on(heat, d) if heat else None
-        hot = dev is not None and dev > HEAT_TH
+        hot = is_hot(dev)
         above_exit = px >= ma_x * (1 - STRATEGY_EXIT_BAND)
         if not state:
             if heat_out and not above_exit:
                 heat_out = False  # 過熱空手期間已跌破出場線：回到一般進場規則
-            cooled = dev is None or dev < HEAT_REENTRY
+            cooled = dev is None or (dev[0] < HEAT_REENTRY and dev[1] <= HEAT_Z)
             if (px > ma_n * (1 + STRATEGY_ENTRY_BAND) and not hot) or (heat_out and cooled and above_exit):
                 state, switched, heat_out = True, d, False
         elif hot:
@@ -355,8 +364,8 @@ def strategy_lines(date: str) -> list:
     if dev is not None:
         last = max(k for k in heat if k <= date)
         stale = "" if last == date else f"（用 {int(last[4:6])}/{int(last[6:])} 的融資資料）"
-        status = "🔥 過熱：出場、不進場" if dev > HEAT_TH else "正常"
-        lines.append(f"融資過熱濾網：融資÷指數 比 {HEAT_N} 日平均 {dev:+.1%}（門檻 +{HEAT_TH:.1%}）→ {status}{stale}")
+        status = "🔥 過熱：出場、不進場" if is_hot(dev) else "正常"
+        lines.append(f"融資過熱濾網：融資÷指數 比 {HEAT_N} 日平均 {dev[0]:+.1%}（門檻 +{HEAT_TH:.1%}）、z {dev[1]:+.2f}（門檻 {HEAT_Z:g}）→ {status}{stale}")
     lines.append(f"應持有：{hold}{since}")
     if is_friday and switched == date:
         action = f"買進 → {STRATEGY_ON}" if state else f"全部賣出 → {STRATEGY_OFF}"

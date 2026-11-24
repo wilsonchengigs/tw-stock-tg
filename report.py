@@ -184,14 +184,16 @@ def hourly_ma_line(date: str):
 
 
 # ── 交易策略：每週最後一個交易日收盤判斷 ─────────────────────────────────────
-# 出場：收盤跌破 80 日均線 ×0.98；進場：收盤站上 60 日均線 ×1.01（進場用較短的均線，大跌後回得比較快）
-# 進場全押 00631L（2 倍）。回測（1998～2026，週頻、含交易成本）：年化約 18.0%、最大回檔約 -44%
-# （大盤買進持有 8.9%、-65%；改持 50% 00631L＋50% 0050 是 14.4%、-34%）；
-# 2015-09 之後真實價格：全押 00631L 年化 31.4%、最大回檔 -37.2%（0050 買進持有 20.6%、-33.8%）。
+# 出場：收盤跌破 80 日均線 ×0.975；進場：收盤站上 60 日均線 ×1.01（進場用較短的均線，大跌後回得比較快）
+# 進場全押 00631L（2 倍）。回測（1998～2026，週頻、含交易成本）：年化約 19.2%、最大回檔約 -44%
+# （大盤買進持有 8.6%、-65%；改持 50% 00631L＋50% 0050 是 15.3%、-34%）；
+# 2015-09 之後真實價格：全押 00631L 年化 33.0%、最大回檔 -37.2%（0050 買進持有 20.2%、-33.8%）。
+# 出場緩衝 2026-11-24 由 2% 改 2.5%（研究 11、24、29：歷史三段、真實價格、約 70% 拔靴模擬路徑都較好）。
+# 風險提醒（研究 19）：拔靴模擬 20 年內回檔超過 50% 的機率約 75%，歷史 -44% 有運氣成分。
 # 另外測過停損（8～20%）、每天檢查出場、帳戶回落降槓桿，最大回檔都沒有比較小（停損會被盤整反覆洗出場），所以不加
 # 出場 80～90 日、進場 60～70 日的鄰近參數都在 14～15%／-31～-34%，不是單一參數湊出來的。
 # 進場改用 10～20 日這類短均線反而更差（大跌途中的反彈會一直騙進場，最大回檔 > 58%）
-STRATEGY_EXIT_MA, STRATEGY_EXIT_BAND = 80, 0.02
+STRATEGY_EXIT_MA, STRATEGY_EXIT_BAND = 80, 0.025
 STRATEGY_ENTRY_MA, STRATEGY_ENTRY_BAND = 60, 0.01
 STRATEGY_ON = "100% 00631L（台灣50正2）"
 STRATEGY_OFF = "100% 現金（或定存）"
@@ -250,7 +252,7 @@ def strategy_lines(date: str) -> list:
     px = closes[-1][1]
     up, dn = ma_n * (1 + STRATEGY_ENTRY_BAND), ma_x * (1 - STRATEGY_EXIT_BAND)
     is_friday = datetime.strptime(date, "%Y%m%d").weekday() == 4
-    lines = ["", f"🧭 策略（進場 MA{STRATEGY_ENTRY_MA}+{STRATEGY_ENTRY_BAND:.0%}、出場 MA{STRATEGY_EXIT_MA}-{STRATEGY_EXIT_BAND:.0%}，每週五收盤判斷）"]
+    lines = ["", f"🧭 策略（進場 MA{STRATEGY_ENTRY_MA}+{STRATEGY_ENTRY_BAND * 100:g}%、出場 MA{STRATEGY_EXIT_MA}-{STRATEGY_EXIT_BAND * 100:g}%，每週五收盤判斷）"]
     lines.append(f"指數 {px:,.0f}｜進場線 {up:,.0f}（MA{STRATEGY_ENTRY_MA} {ma_n:,.0f}）｜出場線 {dn:,.0f}（MA{STRATEGY_EXIT_MA} {ma_x:,.0f}）")
     hold = STRATEGY_ON if state else STRATEGY_OFF
     since = f"（{int(switched[4:6])}/{int(switched[6:])} 起）" if switched else ""

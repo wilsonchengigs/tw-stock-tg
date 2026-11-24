@@ -3,6 +3,7 @@
 - 進場：PX > MA60×1.01 且不過熱；出場：PX < MA80×0.975 或過熱
 - 過熱：融資÷指數 偏離 250 日均 > 17.5% 或 z（偏離÷250 日標準差）> 2
 - 過熱出場後回補：偏離 < 12.5% 且 z ≤ 2 且 PX ≥ MA80×0.975
+- 融資過熱每天檢查（daily_heat，2026-11-24 起預設開啟）；價格規則與回補仍週五
 參數可調（給研究用）；hot_lev＝過熱時保留的槓桿（0＝全出）
 """
 import importlib.util
@@ -50,7 +51,7 @@ def hot_at(i, th=0.175, zth=2.0):
     return DEV[i] is not None and (DEV[i] > th or (zth is not None and Z[i] > zth))
 
 
-def run(start, end, real=False, lev=2.0, hot_lev=0.0, th=0.175, zth=2.0, reentry=0.125, use_heat=True, curve=False):
+def run(start, end, real=False, lev=2.0, hot_lev=0.0, th=0.175, zth=2.0, reentry=0.125, use_heat=True, curve=False, daily_heat=True):
     """回傳 (年化, 最大回檔[, 每日淨值])；lev＝正常持有槓桿（00631L＋0050 混合）"""
     r1 = R1R if real else bt.R1
     r2 = R2R if real else bt.R2
@@ -76,6 +77,12 @@ def run(start, end, real=False, lev=2.0, hot_lev=0.0, th=0.175, zth=2.0, reentry
         peak = max(peak, eq)
         mdd = min(mdd, eq / peak - 1)
         out.append(eq)
+        if daily_heat and use_heat and i >= 260 and not WE[i] and state == 1 and hot_at(i, th, zth):
+            state, heat_out = 0, True  # 融資過熱每天檢查（研究 90）
+            t = hot_lev if (hot_lev > 0 and PX[i] >= M80[i] * 0.975) else 0.0
+            if t != cur:
+                pend = t
+            continue
         if WE[i] and i >= 260:
             hot = use_heat and hot_at(i, th, zth)
             p = PX[i]
@@ -116,5 +123,6 @@ def fmt(**kw):
 
 if __name__ == "__main__":
     print("v3（現行）", fmt())
+    print("過熱只週五", fmt(daily_heat=False))
     print("無 z     ", fmt(zth=None))
     print("無融資濾網", fmt(use_heat=False))

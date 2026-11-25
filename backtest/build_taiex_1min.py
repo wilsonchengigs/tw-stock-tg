@@ -70,7 +70,7 @@ def main():
                 raw = urllib.request.urlopen(urllib.request.Request(URL.format(d.replace("-", "")),
                                                                     headers={"User-Agent": "Mozilla/5.0"}), timeout=60).read()
                 data = [[x.lstrip("=").strip('"') for x in r] for r in csv.reader(raw.decode("big5", errors="replace").splitlines())
-                        if r and r[0].startswith("=")]
+                        if r and r[0].lstrip("=").strip('"')[:2].isdigit() and ":" in r[0]]  # 09 點用 ="09:.." 格式、10 點起沒有 =
                 break
             except Exception as e:  # noqa: BLE001
                 print(d, "retry", e, flush=True)

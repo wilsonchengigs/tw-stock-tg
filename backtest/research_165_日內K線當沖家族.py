@@ -110,6 +110,23 @@ def trades(days):
             s = 1 if tr > 0 else -1
             T["D 早盤±0.5% → 午盤順勢"].append((d, s * (c / m11 - 1) - cost))
             T["D 早盤±0.5% → 午盤反向"].append((d, -s * (c / m11 - 1) - cost))
+        # E 盤中急跌逆勢：從 09:05 起第一次收盤跌（漲）≥ x → 下一分鐘收盤價進反向，13:30 出
+        for x in (0.01, 0.015, 0.02):
+            for t in times("09:06", "13:00"):
+                if t in b:
+                    ch = b[t][3] / o - 1
+                    if ch <= -x:
+                        T[f"E 盤中跌≥{x:.1%} 逆勢做多"].append((d, c / b[t][3] - 1 - cost))
+                        break
+                    if ch >= x:
+                        T[f"E 盤中漲≥{x:.1%} 逆勢做空"].append((d, -(c / b[t][3] - 1) - cost))
+                        break
+        # F 最後一小時順勢：09:05→12:30 方向（|漲跌| ≥0.3%）→ 12:30 進、13:30 出
+        m1230 = px(b, "12:30")
+        tr2 = m1230 / o - 1
+        if abs(tr2) >= 0.003:
+            s = 1 if tr2 > 0 else -1
+            T["F 尾盤一小時順勢"].append((d, s * (c / m1230 - 1) - cost))
         prev_close = c
     return T
 

@@ -783,6 +783,23 @@ def word(v: float) -> str:
     return "買超" if v > 0 else "賣超" if v < 0 else "持平"
 
 
+SENT_FILE = os.path.join(DATA_DIR, "sent_dates.csv")
+
+
+def sent_dates() -> set:
+    """已經送過日報的日期（YYYYMMDD）。主排程和備援排程都會跑，靠這份避免重送"""
+    try:
+        return {ln.strip() for ln in open(SENT_FILE, encoding="utf-8") if ln.strip()}
+    except FileNotFoundError:
+        return set()
+
+
+def mark_sent(date: str):
+    if date not in sent_dates():
+        with open(SENT_FILE, "a", encoding="utf-8") as f:
+            f.write(date + "\n")
+
+
 def send(text: str):
     token, chat = os.environ["TG_BOT_TOKEN"], os.environ["TG_CHAT_ID"]
     body = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
@@ -862,8 +879,19 @@ def margin_lines(date: str, retry: bool):
 def main():
     part = os.environ.get("REPORT_PART") or "all"
     date = os.environ.get("REPORT_DATE") or ""
-    retry = not date
-    date = date or datetime.now(TW).strftime("%Y%m%d")
+    scheduled = retry = not date
+    late = ""
+    now = datetime.now(TW)
+    if scheduled and part != "alert" and now.hour < 14:
+        # GitHub 排程曾延遲近 10 小時（11/24 21:30 的排程 11/25 07:11 才跑）：中午前才跑到的改送前一個平日，資料早就有了不用等
+        d = now - timedelta(days=1)
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        date, retry, late = d.strftime("%Y%m%d"), False, "（排程延遲補發）"
+    date = date or now.strftime("%Y%m%d")
+    if scheduled and part != "alert" and date in sent_dates():
+        print(f"{date} 已經送過，不重送")
+        return
     if datetime.strptime(date, "%Y%m%d").weekday() >= 5:
         print(f"{date} 是週末，不送")
         return
@@ -901,13 +929,16 @@ def main():
             print(f"策略失敗：{e}", file=sys.stderr)
     # 有要操作的訊號就放到最上面並附期限，免得被長報告淹沒
     acts = [ln.strip() for ln in body if ln.strip().startswith(("🔔", "🎯", "⚠️"))]
-    head = [f"📊 {md} {title}"]
+    head = [f"📊 {md} {title}{late}"]
     if acts:
-        head += ["", "🚨 今日有訊號觸發："] + [f"・{a}" for a in acts] + [
-            "⏰ 期限：主策略（00631L）明天收盤前下單；台指期明早 8:45 開盤（夜盤到明早 5:00 也能下，但回測是用開盤價）"]
+        when = ("⏰ 期限：主策略（00631L）今天收盤前下單；台指期今天 8:45 開盤（補發時已過開盤就用市價）" if late else
+                "⏰ 期限：主策略（00631L）明天收盤前下單；台指期明早 8:45 開盤（夜盤到明早 5:00 也能下，但回測是用開盤價）")
+        head += ["", f"🚨 {md} 有訊號觸發："] + [f"・{a}" for a in acts] + [when]
     text = "\n".join(head + body)
     print(text)
     send(text)
+    if part == "all":
+        mark_sent(date)
 
 
 if __name__ == "__main__":

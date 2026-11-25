@@ -4,6 +4,10 @@ on:
     # GitHub 用 UTC；週一到週五台灣 21:30 一次寄全部（融資資料約 21:00 才公布）。
     # 排程可能延遲幾分鐘到半小時，資料還沒出來時程式會自己等
     - cron: '30 13 * * 1-5'
+    # 備援：GitHub 排程會延遲甚至整次漏掉（11/24 21:30 那次延到隔天 07:11 才跑）。22:40、00:40 各再跑一次，
+    # 已經送過就不重送（data/sent_dates.csv）；隔天中午前才跑到的改送前一個平日
+    - cron: '40 14 * * 1-5'
+    - cron: '40 16 * * 1-5'
     # 台灣 14:40 收盤後提醒（REPORT_PART=alert）：只有「爆量收黑」觸發才送，讓台指期能趕 15:00 夜盤開盤
     - cron: '40 6 * * 1-5'
   workflow_dispatch:
@@ -15,6 +19,11 @@ on:
       date:
         description: '指定日期 YYYYMMDD（留空＝今天）'
         required: false
+
+# 排隊依序跑：後一次 checkout 時才拿得到前一次 commit 的 sent_dates.csv，不會兩次同時送
+concurrency:
+  group: report
+  cancel-in-progress: false
 
 jobs:
   report:

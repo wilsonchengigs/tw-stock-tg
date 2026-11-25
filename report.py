@@ -1040,6 +1040,11 @@ def main():
             body += strategy_lines(date)
         except Exception as e:  # 策略算不出來不影響其他資訊
             print(f"策略失敗：{e}", file=sys.stderr)
+        try:  # 今天早上若有恐慌隔天做多（候選 6）部位，提醒明早開盤平倉
+            if morning_lines(date, False):
+                body.append(f"🔔 恐慌隔天做多：今天 08:45 進的 {PANIC_ADD} 倍台指期，明早 08:45 開盤平倉（研究 143：抱到隔天開盤）")
+        except Exception as e:  # noqa: BLE001
+            print(f"恐慌部位檢查失敗：{e}", file=sys.stderr)
     # 有要操作的訊號就放到最上面並附期限，免得被長報告淹沒
     acts = [ln.strip() for ln in body if ln.strip().startswith(("🔔", "🎯", "⚠️"))]
     head = [f"📊 {md} {title}{late}"]

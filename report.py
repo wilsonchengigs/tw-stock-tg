@@ -5,6 +5,7 @@
 - 晚上（REPORT_PART=margin）：大盤（上市）融資維持率、融資餘額增減（約 21:00 公布）、外資台指期淨未平倉（期交所）
 - REPORT_PART=all（預設，排程用這個）：兩段一起
 - REPORT_PART=alert（14:40 排程）：爆量收黑（研究 63／64b）觸發才送，附操作時間；21:30 日報有訊號時最上面列「今日有訊號觸發」與期限
+- REPORT_PART=morning（07:20 排程，備援 07:45、08:10）：夜盤跌 ≥2% 或 S&P500 前一晚跌 ≥2% 才送（候選 6「恐慌隔天做多」，研究 139、142～145），附勝率與期望值
 - 策略段落後附「觀察」：台指選擇權 Put/Call 未平倉比與研究 32 的提早進場條件（期交所，僅供觀察、未納入策略）
 - 加快速度：過去的資料存在 data/（taiex_daily、pcratio、margin_ratio、taiex_hourly），每次只抓當天／當月，
   GitHub Actions 跑完把 data/*.csv commit 回來
@@ -601,6 +602,87 @@ def alert_lines(date: str, retry: bool) -> list:
     return lines
 
 
+# ── 早上提醒：恐慌隔天做多（候選 6，研究 139、142～145；2026-11-25 使用者同意加入）────────────
+# 夜盤（前一天 15:00→今天 05:00）近月 開→收 跌 ≥2%，或 S&P500 前一個美國交易日跌 ≥2%
+# → 今天 08:45 開盤加 0.5 倍台指期，抱到下一個交易日 08:45 開盤出；不設停損、不分主策略狀態
+PANIC_TH, PANIC_ADD = 0.02, 0.5
+MORNING_SENT_FILE = os.path.join(DATA_DIR, "morning_sent.csv")
+
+
+def tx_night(date: str):
+    """期交所 TX 當天「盤後」列（＝前一天 15:00 開始的夜盤）中成交量最大的月份：(月份, 開, 收)；還沒公布回 None"""
+    ymd = f"{date[:4]}/{date[4:6]}/{date[6:]}"
+    body = urllib.parse.urlencode({"down_type": "1", "commodity_id": "TX", "commodity_id2": "",
+                                   "queryStartDate": ymd, "queryEndDate": ymd}).encode()
+    req = urllib.request.Request("https://www.taifex.com.tw/cht/3/futDataDown", data=body, headers=UA)
+    with urllib.request.urlopen(req, timeout=30) as res:
+        txt = res.read().decode("big5", errors="replace")
+    best = None
+    for ln in txt.splitlines()[1:]:
+        r = [x.strip() for x in ln.split(",")]
+        if len(r) < 18 or r[1] != "TX" or "/" in r[2] or "W" in r[2] or r[17] != "盤後":
+            continue
+        try:
+            o, c, v = float(r[3]), float(r[6]), float(r[9])
+        except ValueError:
+            continue
+        if best is None or v > best[3]:
+            best = (r[2], o, c, v)
+    return best[:3] if best else None
+
+
+def sp500_last(date: str):
+    """S&P500 在台灣日期 date 之前最近一個美國交易日的漲跌：(美國日期 YYYYMMDD, 漲跌)；拿不到回 None"""
+    url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=10d&interval=1d"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as res:
+        r = json.loads(res.read().decode("utf-8"))["chart"]["result"][0]
+    ny = timezone(timedelta(hours=-5))
+    rows = [(datetime.fromtimestamp(t, ny).strftime("%Y%m%d"), c)
+            for t, c in zip(r["timestamp"], r["indicators"]["quote"][0]["close"]) if c]
+    rows = [x for x in rows if x[0] < date]
+    if len(rows) < 2:
+        return None
+    return rows[-1][0], rows[-1][1] / rows[-2][1] - 1
+
+
+def morning_lines(date: str, retry: bool) -> list:
+    """有觸發才回傳訊息行；排程時夜盤資料還沒出來會等（最多約 30 分鐘）"""
+    night = wait_for(tx_night, date, retry)
+    try:
+        sp = sp500_last(date)
+    except Exception as e:  # noqa: BLE001  美股抓不到不影響夜盤判斷
+        print(f"S&P500 抓取失敗：{e}", file=sys.stderr)
+        sp = None
+    nr = night[2] / night[1] - 1 if night else None
+    hit_n = nr is not None and nr <= -PANIC_TH
+    hit_s = sp is not None and sp[1] <= -PANIC_TH
+    print(f"夜盤 {night} {nr}；S&P {sp}")
+    if not (hit_n or hit_s):
+        return []
+    lines = []
+    if night:
+        lines.append(f"{'🔻' if hit_n else '・'}夜盤（{night[0]}）：{night[1]:,.0f} → {night[2]:,.0f}（{nr:+.2%}，門檻 -{PANIC_TH:.0%}）")
+    if sp:
+        lines.append(f"{'🔻' if hit_s else '・'}S&P500（{sp[0][4:6]}/{sp[0][6:]}）：{sp[1]:+.2%}（門檻 -{PANIC_TH:.0%}）")
+    lines += [
+        f"🎯 今天 08:45 開盤買台指期近月 {PANIC_ADD} 倍名目（不管主策略在不在場），抱到下一個交易日 08:45 開盤平倉；不設停損",
+        "📈 歷史（每筆扣 3 點成本）：",
+        "・2017-05～2026（有夜盤，夜盤或 S&P 跌 ≥2%）99 筆：勝率 66%、期望值每筆 +0.49%（約 +104 點／口）、"
+        "平均賺 +1.60%／平均賠 -1.64%、最差 -9.3%",
+        "・1998～2017（無夜盤，S&P 跌 ≥2% 代理，樣本外）215 筆：勝率 60%、期望值每筆 +0.50%",
+        "・疊在現行策略上（2018-06～，加 0.5 倍）：年化 57.4% → 61.5%、最大回檔 -27.3% → -25.6%；家族檢定 p 0.002",
+        "⚠️ 好處集中在崩跌期，單筆可能賠 5～9%；照規則開盤進，不要盤中追價或加碼",
+    ]
+    return lines
+
+
+def morning_sent() -> set:
+    if not os.path.exists(MORNING_SENT_FILE):
+        return set()
+    return {ln.strip() for ln in open(MORNING_SENT_FILE, encoding="utf-8") if ln.strip()}
+
+
 # ── 觀察指標：台指選擇權 Put/Call 未平倉比（研究 31、32，尚未納入策略）────────────
 # 空手時，近 10 個交易日內 P/C 未平倉比曾達「過去 250 日的 95 分位以上」，且收盤比近 10 日最低收盤高 3% 以上，
 # 回測（2002～2026）提早進場的效果最好：樣本外仍勝現行，安慰劑檢定 p≈0.05～0.10（邊緣顯著）。先放在日報觀察。
@@ -886,6 +968,28 @@ def main():
     scheduled = retry = not date
     late = ""
     now = datetime.now(TW)
+    if part == "morning":  # 早上提醒（候選 6）：沒觸發就不送；備援排程重跑不重送
+        date = date or now.strftime("%Y%m%d")
+        if datetime.strptime(date, "%Y%m%d").weekday() >= 5:
+            print(f"{date} 是週末，不送")
+            return
+        if scheduled and (date in morning_sent() or now.hour >= 13):
+            print(f"{date} 早上提醒已送過或已過 13:00（排程延遲太久），不送")
+            return
+        lines = morning_lines(date, retry)
+        if not lines:
+            print(f"{date} 夜盤與 S&P 都沒跌 ≥{PANIC_TH:.0%}（或夜盤資料還沒出來／今天沒開盤），不送")
+            return
+        late = ("（⏰ 排程延遲，已過 08:45 開盤；回測只驗證開盤進場，晚進沒有根據）"
+                if scheduled and now.hour * 60 + now.minute > 8 * 60 + 45 else "")
+        text = "\n".join([f"🌅 {int(date[4:6])}/{int(date[6:])} 早上提醒：恐慌隔天做多（候選 6）{late}"] + lines)
+        print(text)
+        send(text)
+        if scheduled:
+            with open(MORNING_SENT_FILE, "a", encoding="utf-8") as f:
+                f.write(date + "\n")
+        return
+
     if scheduled and part != "alert" and now.hour < 14:
         # GitHub 排程曾延遲近 10 小時（11/24 21:30 的排程 11/25 07:11 才跑）：中午前才跑到的改送前一個平日，資料早就有了不用等
         d = now - timedelta(days=1)

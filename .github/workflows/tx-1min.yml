@@ -1,5 +1,5 @@
 name: 台指期 1 分 K 累積
-# 期交所逐筆成交只保留近 30 個交易日，每天抓一次存進 backtest/tx_1min.csv，累積長期日內資料（馬克羊短線研究、待研究 23）
+# 期交所逐筆成交只保留近 30 個交易日，每天抓一次存進 backtest/tx_1min.csv（1 分 K）與 backtest/tx_ticks/（近月逐筆），累積長期日內資料（馬克羊短線研究、待研究 23）
 # 早上跑：抓「昨天以前」還沒存的交易日（含夜盤）；GitHub 排程可能延遲或漏跑，程式會往回補到 30 天內缺的日子
 on:
   schedule:
@@ -25,7 +25,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backtest/tx_1min.csv
+          git add backtest/tx_1min.csv backtest/tx_ticks
           git diff --cached --quiet && exit 0
           git commit -m "台指期 1 分 K 累積"
           for i in 1 2 3; do git pull --rebase && git push && exit 0; sleep 10; done

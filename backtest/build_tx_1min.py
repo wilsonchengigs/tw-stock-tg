@@ -4,10 +4,13 @@
 - session：day（08:45～13:45）／night（15:00～隔日 05:00）
 - 近月：每個交易日成交量最大的單一月份（不含價差單 202612/202701、不含週選代號）
 - volume：檔案的「成交數量(B+S)」÷ 2 ＝ 口數
+- 另存近月逐筆成交 backtest/tx_ticks/YYYY-MM-DD.csv.gz（成交時間 YYYYMMDDHHMMSS,價格,口數；檔案原順序），
+  給停利／停損只有幾點的當沖回測用（1 分 K 判斷不出同一分鐘內先碰到哪邊）；壓縮後約 180KB／天
 - 可重跑，已有的交易日跳過；原始 zip 只在記憶體處理不落地
 用法：python -X utf8 backtest/build_tx_1min.py
 """
 import csv
+import gzip
 import io
 import os
 import time
@@ -18,6 +21,7 @@ from datetime import date, datetime, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "tx_1min.csv")
+TICK_DIR = os.path.join(HERE, "tx_ticks")
 URL = "https://www.taifex.com.tw/file/taifex/Dailydownload/DailydownloadCSV/Daily_{:%Y_%m_%d}.zip"
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120"}
 
@@ -72,7 +76,19 @@ def bars_of(raw, d):
             b[2] = min(b[2], px)
             b[3] = px  # 已排序；同一分鐘最後一筆為收
             b[4] += q
+    save_ticks(d, [(dd + tt, px, q) for dd, tt, px, q, mon in ticks if mon == near])
     return [(f"{d:%Y-%m-%d}", s, ts.strftime("%Y-%m-%d %H:%M"), *v) for (s, ts), v in sorted(agg.items(), key=lambda x: x[0][1])]
+
+
+def tick_path(d):
+    return os.path.join(TICK_DIR, f"{d:%Y-%m-%d}.csv.gz")
+
+
+def save_ticks(d, rows):
+    os.makedirs(TICK_DIR, exist_ok=True)
+    body = "\n".join(f"{t},{px:g},{q}" for t, px, q in rows) + "\n"
+    with open(tick_path(d), "wb") as f:  # mtime=0：內容沒變時壓縮檔也一樣，git 不會多出 diff
+        f.write(gzip.compress(body.encode(), 9, mtime=0))
 
 
 def main():
@@ -87,13 +103,17 @@ def main():
     d = date.today() - timedelta(days=1)  # 今天的檔案可能是盤中、不完整，不抓
     misses = 0
     while misses < 15:  # 往回找，連續 15 個工作日抓不到就停（超過 30 個交易日的檔案會被移除）
-        if d.weekday() < 5 and f"{d:%Y-%m-%d}" not in done:
+        have = f"{d:%Y-%m-%d}" in done
+        if d.weekday() < 5 and (not have or not os.path.exists(tick_path(d))):
             raw = fetch(d)
             if raw is None:
                 misses += 1
             else:
                 misses = 0
-                rows = bars_of(raw, d)
+                rows = bars_of(raw, d)  # 也會存逐筆
+                if have:
+                    d -= timedelta(days=1)
+                    continue
                 w.writerows(rows)
                 f.flush()
                 print(d, len(rows), "根", flush=True)

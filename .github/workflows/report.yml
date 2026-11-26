@@ -46,6 +46,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           REPORT_PART: ${{ inputs.part || (github.event.schedule == '40 6 * * 1-5' && 'alert') || (contains(fromJSON('["20 23 * * 0-4", "45 23 * * 0-4", "10 0 * * 1-5"]'), github.event.schedule) && 'morning') || 'all' }}
           REPORT_DATE: ${{ inputs.date }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
 
       # data/ 有新增才 commit；過去的資料不會變，下次只抓當天／當月
       - name: 存回資料快取

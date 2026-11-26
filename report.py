@@ -967,33 +967,42 @@ def margin_lines(date: str, retry: bool):
     return lines
 
 
+def run_morning(date, scheduled, retry, now):
+    """早上提醒（候選 6）：沒觸發就不送；備援排程重跑不重送"""
+    mdate = date or now.strftime("%Y%m%d")
+    if datetime.strptime(mdate, "%Y%m%d").weekday() >= 5:
+        print(f"{mdate} 是週末，不送")
+        return
+    if scheduled and (mdate in morning_sent() or now.hour >= 13):
+        print(f"{mdate} 早上提醒已送過或已過 13:00（排程延遲太久），不送")
+        return
+    lines = morning_lines(mdate, retry)
+    if not lines:
+        print(f"{mdate} 夜盤與 S&P 都沒跌 ≥{PANIC_TH:.0%}（或夜盤資料還沒出來／今天沒開盤），不送")
+        return
+    late = ("（⏰ 排程延遲，已過 08:45 開盤；回測只驗證開盤進場，晚進沒有根據）"
+            if scheduled and now.hour * 60 + now.minute > 8 * 60 + 45 else "")
+    text = "\n".join([f"🌅 {int(mdate[4:6])}/{int(mdate[6:])} 早上提醒：恐慌隔天做多（候選 6）{late}"] + lines)
+    print(text)
+    send(text)
+    if scheduled:
+        with open(MORNING_SENT_FILE, "a", encoding="utf-8") as f:
+            f.write(mdate + "\n")
+
+
+
 def main():
     part = os.environ.get("REPORT_PART") or "all"
     date = os.environ.get("REPORT_DATE") or ""
     scheduled = retry = not date
     late = ""
     now = datetime.now(TW)
-    if part == "morning":  # 早上提醒（候選 6）：沒觸發就不送；備援排程重跑不重送
-        date = date or now.strftime("%Y%m%d")
-        if datetime.strptime(date, "%Y%m%d").weekday() >= 5:
-            print(f"{date} 是週末，不送")
+    print(f"REPORT_PART={part} EVENT_SCHEDULE={os.environ.get('EVENT_SCHEDULE', '')} 台灣 {now:%m/%d %H:%M}")
+    # 早上的排程有時被判成 all（11/26 三次早上排程都是 all）：台灣 07:00～12:59 的排程 all 也順便檢查早上提醒（已送過不重送）
+    if part == "morning" or (part == "all" and scheduled and os.environ.get("EVENT_SCHEDULE") and 7 <= now.hour < 13):
+        run_morning(date, scheduled, retry, now)
+        if part == "morning":
             return
-        if scheduled and (date in morning_sent() or now.hour >= 13):
-            print(f"{date} 早上提醒已送過或已過 13:00（排程延遲太久），不送")
-            return
-        lines = morning_lines(date, retry)
-        if not lines:
-            print(f"{date} 夜盤與 S&P 都沒跌 ≥{PANIC_TH:.0%}（或夜盤資料還沒出來／今天沒開盤），不送")
-            return
-        late = ("（⏰ 排程延遲，已過 08:45 開盤；回測只驗證開盤進場，晚進沒有根據）"
-                if scheduled and now.hour * 60 + now.minute > 8 * 60 + 45 else "")
-        text = "\n".join([f"🌅 {int(date[4:6])}/{int(date[6:])} 早上提醒：恐慌隔天做多（候選 6）{late}"] + lines)
-        print(text)
-        send(text)
-        if scheduled:
-            with open(MORNING_SENT_FILE, "a", encoding="utf-8") as f:
-                f.write(date + "\n")
-        return
 
     if scheduled and part != "alert" and now.hour < 14:
         # GitHub 排程曾延遲近 10 小時（11/24 21:30 的排程 11/25 07:11 才跑）：中午前才跑到的改送前一個平日，資料早就有了不用等

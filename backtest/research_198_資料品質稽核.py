@@ -22,7 +22,8 @@ sys.path.insert(0, HERE)
 import data  # noqa: E402
 
 TW, E50, E631 = data.series()
-DAYS = sorted(TW)
+TODAY = __import__("datetime").datetime.now(data.TW).strftime("%Y-%m-%d")
+DAYS = sorted(d for d in TW if d < TODAY)  # Yahoo 盤中就有今天的資料，期貨日盤要收盤後才有：今天不檢查
 PX = {d: TW[d][0] for d in DAYS}
 R = {DAYS[i]: PX[DAYS[i]] / PX[DAYS[i - 1]] - 1 for i in range(1, len(DAYS))}
 PREV = {DAYS[i]: DAYS[i - 1] for i in range(1, len(DAYS))}

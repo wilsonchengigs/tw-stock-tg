@@ -56,5 +56,5 @@ jobs:
           git add backtest/tx_daily_ohlc.csv backtest/turnover_daily.csv backtest/tx_inst_oi.csv backtest/TWII.json backtest/0050.TW.json backtest/00631L.TW.json
           git diff --cached --quiet && exit 0
           git commit -m "每月健康檢查：回測資料更新"
-          for i in 1 2 3; do git pull --rebase && git push && exit 0; sleep 10; done
+          for i in 1 2 3; do git pull --rebase --autostash && git push && exit 0; sleep 10; done
           exit 1

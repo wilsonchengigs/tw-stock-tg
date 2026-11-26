@@ -1068,6 +1068,9 @@ def run_morning(date, scheduled, retry, now):
     if datetime.strptime(mdate, "%Y%m%d").weekday() >= 5:
         print(f"{mdate} 是週末，不送")
         return
+    if not is_trading_day(datetime.strptime(mdate, "%Y%m%d").date()):  # 研究 271：休市日（如 12/25）不送「今天 08:45 買」
+        print(f"{mdate} 證交所休市，不送（S&P 若大跌，下一個交易日早上會再判斷）")
+        return
     if scheduled and (mdate in morning_sent() or now.hour >= 13):
         print(f"{mdate} 早上提醒已送過或已過 13:00（排程延遲太久），不送")
         return

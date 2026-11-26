@@ -29,6 +29,8 @@ for _i in range(1, N):
     R1R.append(_p1[_i] / _lp - 1 if (_p1[_i] and _lp) else bt.R1[_i])
     if _p1[_i]:
         _lp = _p1[_i]
+    elif _lp:  # 缺價那天用模型補，下一天接在補值後的價格上（研究 192 發現重複計算）
+        _lp *= 1 + bt.R1[_i]
 
 
 def _dev_z(n=250):

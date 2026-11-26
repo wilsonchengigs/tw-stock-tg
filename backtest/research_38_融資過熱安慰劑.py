@@ -24,6 +24,8 @@ for _i in range(1, N):
     R2R.append(_px[_i] / _lp - 1 if (_px[_i] and _lp) else bt.R2[_i])
     if _px[_i]:
         _lp = _px[_i]
+    elif _lp:  # 缺價那天用模型補，下一天要接在補值後的價格上，不然缺的那天會被算兩次（研究 192 發現）
+        _lp *= 1 + bt.R2[_i]
 
 
 def kw_for(dev, y):

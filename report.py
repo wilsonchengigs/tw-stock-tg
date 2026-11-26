@@ -298,6 +298,19 @@ def is_week_end(date: str) -> bool:
     return nxt.isocalendar()[:2] != d.isocalendar()[:2]
 
 
+def holiday_note(date: str) -> str:
+    """下一個交易日不是明天（且不是一般週末）時的提示；研究 272：訊息裡的「明天／明早」都是指下一個交易日"""
+    d = datetime.strptime(date, "%Y%m%d").date()
+    nxt = d + timedelta(days=1)
+    while not is_trading_day(nxt):
+        nxt += timedelta(days=1)
+    gap = (nxt - d).days
+    if gap == 1 or (d.weekday() == 4 and gap == 3):
+        return ""
+    wk = "一二三四五六日"[nxt.weekday()]
+    return f"📆 明天起休市，下一個交易日是 {nxt.month}/{nxt.day}（{wk}）：下面說的「明天／明早」都是指 {nxt.month}/{nxt.day}"
+
+
 def strategy_state(closes: list, heat: dict = None):
     """依每週最後一個交易日的收盤跑一遍，回傳 (目前狀態, 上次切換日, 今天的出場均線, 今天的進場均線)
     heat：融資過熱偏離（heat_series）；過熱時出場且不進場"""
@@ -1179,6 +1192,9 @@ def main():
             + ([("台指期今天 8:45 開盤（補發時已過開盤就用市價）" if late else "台指期明早 8:45 開盤")] if fut_ else [])
             + (["台美背離加碼明天 13:45 收盤前平倉"] if any(a.startswith("📌") for a in acts) else []))
         head += ["", f"🚨 {md} 有訊號觸發："] + [f"・{a}" for a in acts] + [when]
+    note = holiday_note(date)  # 研究 272：明天休市時說明「明天／明早」指哪一天
+    if note:
+        head.insert(1, note)
     text = "\n".join(head + body)
     print(text)
     send(text)

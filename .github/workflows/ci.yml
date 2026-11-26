@@ -1,0 +1,20 @@
+name: CI
+# 只在程式碼變動時跑（Actions 每天 commit data/*.csv 不觸發）
+on:
+  push:
+    paths: ['**.py', 'tests/**', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['**.py', 'tests/**', '.github/workflows/ci.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 語法檢查（日報主程式、研究共用模組）
+        run: python -m py_compile report.py backtest/bt.py backtest/data.py backtest/strategy_v3.py
+      - name: 單元測試
+        run: python -X utf8 -m unittest discover -s tests -v

@@ -16,12 +16,14 @@
 環境變數：TG_BOT_TOKEN、TG_CHAT_ID；REPORT_PART；REPORT_DATE（選填，YYYYMMDD，測試用）
 只用 Python 標準函式庫。
 """
+import csv
 import json
 import os
 import re
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -36,11 +38,26 @@ _JSON_MEMO = {}  # 同一次執行裡同一個網址只抓一次（例如當月 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
+def urlopen_retry(req, tries: int = 3, retry_post: bool = False):
+    """urlopen（逾時 30 秒）＋退避重試：429／5xx／連線錯誤等 2、4 秒再試，其他 HTTP 錯誤（404 等）直接丟。
+    POST（Telegram）預設只在 429／5xx 重試——連線逾時時訊息可能已送出，重試會重複"""
+    for k in range(tries):
+        try:
+            return urllib.request.urlopen(req, timeout=30)
+        except urllib.error.HTTPError as e:
+            if k == tries - 1 or not (e.code == 429 or e.code >= 500):
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if k == tries - 1 or (req.data is not None and not retry_post):
+                raise
+        time.sleep(2 ** (k + 1))
+
+
 def get_json(url: str) -> dict:
     if url in _JSON_MEMO:
         return _JSON_MEMO[url]
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=30) as res:
+    with urlopen_retry(req) as res:
         data = json.loads(res.read().decode("utf-8"))
     time.sleep(2)  # 證交所對短時間大量請求會擋，間隔一下
     if data.get("stat") == "OK":
@@ -53,8 +70,8 @@ def load_csv(name: str) -> dict:
     path = os.path.join(DATA_DIR, name)
     if not os.path.exists(path):
         return {}
-    with open(path, encoding="utf-8") as f:
-        lines = [ln.strip().split(",") for ln in f.readlines()[1:] if ln.strip()]
+    with open(path, encoding="utf-8", newline="") as f:
+        lines = [r for r in csv.reader(f) if r][1:]
     return {r[0]: r[1:] for r in lines}
 
 
@@ -413,7 +430,7 @@ def divergence_lines(date: str, closes: list) -> list:
         return []
     url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=3mo&interval=1d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as res:
+    with urlopen_retry(req) as res:
         r = json.loads(res.read().decode("utf-8"))["chart"]["result"][0]
     ny = timezone(timedelta(hours=-5))
     us = [(datetime.fromtimestamp(t, ny).strftime("%Y%m%d"), c)
@@ -506,7 +523,7 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
     body = urllib.parse.urlencode({"queryStartDate": (end - timedelta(days=430)).strftime("%Y/%m/%d"),
                                    "queryEndDate": end.strftime("%Y/%m/%d"), "commodityId": "TXF"}).encode()
     req = urllib.request.Request("https://www.taifex.com.tw/cht/3/futContractsDateDown", data=body, headers=UA)
-    with urllib.request.urlopen(req, timeout=30) as res:
+    with urlopen_retry(req) as res:
         text = res.read().decode("big5", errors="replace")
     net, flow = [], []
     for ln in text.splitlines()[1:]:
@@ -672,7 +689,7 @@ def tx_night(date: str):
     body = urllib.parse.urlencode({"down_type": "1", "commodity_id": "TX", "commodity_id2": "",
                                    "queryStartDate": ymd, "queryEndDate": ymd}).encode()
     req = urllib.request.Request("https://www.taifex.com.tw/cht/3/futDataDown", data=body, headers=UA)
-    with urllib.request.urlopen(req, timeout=30) as res:
+    with urlopen_retry(req) as res:
         txt = res.read().decode("big5", errors="replace")
     best = None
     for ln in txt.splitlines()[1:]:
@@ -692,7 +709,7 @@ def sp500_last(date: str):
     """S&P500 在台灣日期 date 之前最近一個美國交易日的漲跌：(美國日期 YYYYMMDD, 漲跌)；拿不到回 None"""
     url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=10d&interval=1d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as res:
+    with urlopen_retry(req) as res:
         r = json.loads(res.read().decode("utf-8"))["chart"]["result"][0]
     ny = timezone(timedelta(hours=-5))
     rows = [(datetime.fromtimestamp(t, ny).strftime("%Y%m%d"), c)
@@ -768,7 +785,7 @@ def pc_ratio_history(date: str, months: int = 13) -> list:
         body = urllib.parse.urlencode({"queryStartDate": f"{y}/{m:02d}/01",
                                        "queryEndDate": min(end, month_end).strftime("%Y/%m/%d")}).encode()
         req = urllib.request.Request("https://www.taifex.com.tw/cht/3/pcRatioDown", data=body, headers=UA)
-        with urllib.request.urlopen(req, timeout=30) as res:
+        with urlopen_retry(req) as res:
             text = res.read().decode("big5", errors="replace")
         for ln in text.strip().splitlines()[1:]:
             r = ln.split(",")
@@ -881,7 +898,7 @@ def foreign_futures(date: str):
     end = f"{date[:4]}/{date[4:6]}/{date[6:]}"
     body = urllib.parse.urlencode({"queryStartDate": start, "queryEndDate": end, "commodityId": "TXF"}).encode()
     req = urllib.request.Request("https://www.taifex.com.tw/cht/3/futContractsDateDown", data=body, headers=UA)
-    with urllib.request.urlopen(req, timeout=30) as res:
+    with urlopen_retry(req) as res:
         raw = res.read()
     try:
         text = raw.decode("utf-8")
@@ -952,12 +969,36 @@ def mark_sent(date: str):
             f.write(date + "\n")
 
 
+TG_LIMIT = 4096  # Telegram 單則訊息上限（字元）
+
+
+def split_message(text: str, limit: int = TG_LIMIT) -> list:
+    """超過上限時依行切成多則（不切斷一行；單行就超過才硬切）"""
+    parts, cur = [], ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            if cur:
+                parts.append(cur)
+                cur = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        if cur and len(cur) + 1 + len(line) > limit:
+            parts.append(cur)
+            cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    if cur:
+        parts.append(cur)
+    return parts or [""]
+
+
 def send(text: str):
     token, chat = os.environ["TG_BOT_TOKEN"], os.environ["TG_CHAT_ID"]
-    body = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
-    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body)
-    with urllib.request.urlopen(req, timeout=30) as res:
-        res.read()
+    for part in split_message(text):
+        body = urllib.parse.urlencode({"chat_id": chat, "text": part}).encode()
+        req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body)
+        with urlopen_retry(req) as res:
+            res.read()
 
 
 def close_lines(date: str, retry: bool):

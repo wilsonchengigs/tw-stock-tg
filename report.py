@@ -1032,12 +1032,19 @@ def main():
 
     if part == "alert":  # 收盤後提醒：沒觸發就不送
         lines = alert_lines(date, retry)
+        try:  # 研究 247：台美背離加碼（D）14:40 就能判斷（加權收盤＋前一晚 S&P），讓使用者可選 15:00 夜盤進（研究 220：與隔天開盤差不多）
+            dl = [x for x in divergence_lines(date, taiex_daily(date)) if x]
+            if dl and dl[0].startswith("🎯"):
+                dl[0] = dl[0].replace("→ 明早 08:45 開盤加", "→ 今天 15:00 夜盤或明早 08:45 開盤加")
+                lines = (lines + [""] if lines else []) + dl
+        except Exception as e:  # noqa: BLE001
+            print(f"台美背離提醒失敗：{e}", file=sys.stderr)
         if lines:
             text = "\n".join([f"🚨 {md} 收盤後提醒（有訊號觸發）"] + lines)
             print(text)
             send(text)
         else:
-            print(f"{date} 沒有爆量收黑，不送")
+            print(f"{date} 沒有爆量收黑／台美背離觸發，不送")
         return
 
     # 先確認這天有開盤（國定假日證交所回非 OK）：只等「下午」那段，晚上那段收盤資料一定早就有了

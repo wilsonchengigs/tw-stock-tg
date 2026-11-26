@@ -1,8 +1,8 @@
-"""研究 218：台積電（2330，Yahoo adjclose，2000～）20 日報酬 − 加權 20 日報酬（gap）之後 5 日加權報酬
+"""研究 219：台積電（2330，Yahoo adjclose，2000～）20 日報酬 − 加權 20 日報酬（gap）之後 5 日加權報酬
 台積電約占加權 3～4 成：台積電落後加權 ≤-x（權值股沒跟上）→ 補漲？台積電領先加權 ≥+x（權值股獨強、其他股沒跟）→ 回落？
 用同一天收盤；5 日報酬從 D 收盤算（與 204 一致）；對照同 208：tw20 ±2% 且 |gap| < 5% 的同跌幅對照，去叢集 20 天
 家族：落後 4 門檻（4／6／8／10%）、領先 4 門檻，各自 1,000 次平移；兩段（1998–2013／2013–）；現況
-用法：python -X utf8 backtest/research_218_台積電相對加權.py
+用法：python -X utf8 backtest/research_219_台積電相對加權.py
 """
 import bisect
 import json
@@ -38,12 +38,12 @@ for k in range(N):
         EX[k] = f5[k] - (cs[hi] - cs[lo]) / (hi - lo)
 
 first = next(i for i in range(N) if not np.isnan(GAP[i]))
-L = [f"研究 218：台積電相對加權（{DAYS[first]}～{DAYS[-1]}；超額＝5 日加權報酬 − 同跌幅對照）",
+L = [f"研究 219：台積電相對加權（{DAYS[first]}～{DAYS[-1]}；超額＝5 日加權報酬 − 同跌幅對照）",
      f"現況 {DAYS[-1]}：台積電 20 日 {s20[-1]:+.1%}、加權 20 日 {tw20[-1]:+.1%}、gap {GAP[-1]:+.1%}"]
 for label, sign, cond in (("台積電落後 ≤-", +1, lambda th: GAP <= -th), ("台積電領先 ≥+", -1, lambda th: GAP >= th)):
     tests = [(f"{label}{th:.0%}", EX, R.events(cond(th))) for th in (0.04, 0.06, 0.08, 0.10)]
     L.append("")
-    for name, n, m, zz, pv in R.family(tests, sign, 218 + sign):
+    for name, n, m, zz, pv in R.family(tests, sign, 219 + sign):
         th = float(name.split("%")[0][-2:].strip("-+≥≤ ")) / 100
         ev = R.events(cond(th))
         seg = []
@@ -53,4 +53,4 @@ for label, sign, cond in (("台積電落後 ≤-", +1, lambda th: GAP <= -th), (
         L.append(f"  {name}：{n:2d} 次 超額 {m:+.2%}  z {zz:+.2f}  家族 p {pv:.3f} | 兩段 {seg[0]}／{seg[1]}（正向＝{'補漲' if sign > 0 else '回落'}預期為 {'+' if sign > 0 else '-'}）")
 out = "\n".join(L) + "\n"
 print(out)
-open(os.path.join(HERE, "結果_研究218_台積電相對加權.txt"), "w", encoding="utf-8").write(out)
+open(os.path.join(HERE, "結果_研究219_台積電相對加權.txt"), "w", encoding="utf-8").write(out)

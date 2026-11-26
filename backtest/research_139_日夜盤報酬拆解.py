@@ -69,7 +69,7 @@ def load_tx():
 
 
 _tv = list(csv.DictReader(open(os.path.join(HERE, "turnover_daily.csv"), encoding="utf-8")))
-_amtcol = [k for k in _tv[0] if k != "date"][0]
+_amtcol = "amount"  # 2026-11-26 修正：原本取第一個非日期欄＝成交「股數」，日報與研究 64b 用的是成交「金額」
 AMT = {r["date"]: _num(r[_amtcol]) for r in _tv}
 R138 = _load("r138", "research_138_金字塔加碼與分段停損.py")
 COST = 3.0

@@ -61,8 +61,25 @@ def audit(days_back=40):
     return (["🔎 資料稽核（近 40 天）："] + out + [hint]) if out else ["🔎 資料稽核（近 40 天）：✅ 沒有異常"]
 
 
+def trend_vr(years=8, q=26):
+    """台股趨勢性（研究 217）：近 years 年加權週報酬的變異數比 VR(q)；> 1 趨勢延續（均線策略的前提），< 1 均值回歸。
+    歷史：8 年窗 2010～2014 結束時 1.7～1.8，2016～2020 結束時 0.66～0.95（＝主策略 2011～2017 長期水下），2026 1.10"""
+    import numpy as np
+    bt = load("bt_vr", "bt.py")
+    days, px = bt.DAYS, bt.PX
+    wk = [date.fromisoformat(d).isocalendar()[:2] for d in days]
+    idx = [k for k in range(len(days) - 1) if wk[k + 1] != wk[k]] + [len(days) - 1]
+    cut = (date.fromisoformat(days[-1]) - timedelta(days=365 * years)).isoformat()
+    w = np.array([px[k] for k in idx if days[k] >= cut])
+    r = np.diff(np.log(w))
+    rq = np.array([r[i:i + q].sum() for i in range(len(r) - q + 1)])
+    vr = rq.var() / (q * r.var())
+    icon = "🟢" if vr >= 1.0 else "🟡"
+    return [f"{icon} 台股趨勢性：近 {years} 年週報酬 VR({q}) {vr:.2f}（> 1 有趨勢、均線策略的前提；< 1 時主策略容易長期落後，2016～2020 曾 0.66～0.95；研究 217，僅供參考）"]
+
+
 def main():
-    L = [f"🩺 主策略月檢（{date.today():%m/%d}）"] + light() + [""] + audit()
+    L = [f"🩺 主策略月檢（{date.today():%m/%d}）"] + light() + trend_vr() + [""] + audit()
     txt = "\n".join(L)
     print(txt)
     open(os.path.join(HERE, "結果_每月主策略健檢.txt"), "w", encoding="utf-8").write(txt + "\n")

@@ -48,11 +48,18 @@ jobs:
           REPORT_DATE: ${{ inputs.date }}
           EVENT_SCHEDULE: ${{ github.event.schedule }}
 
+      # 台指期 1 分 K 累積的備援（待研究 23）：tx-1min.yml 的排程常常不觸發，期交所只留 30 個交易日；
+      # 日報排程穩定會跑，順便補抓缺的日子（已存的不重抓）。早上提醒不跑，失敗不影響日報
+      - name: 台指期 1 分 K 累積（備援）
+        if: ${{ !cancelled() && !contains(fromJSON('["20 23 * * 0-4", "45 23 * * 0-4", "10 0 * * 1-5"]'), github.event.schedule) }}
+        continue-on-error: true
+        run: python -X utf8 backtest/build_tx_1min.py
+
       # data/ 有新增才 commit；過去的資料不會變，下次只抓當天／當月
       - name: 存回資料快取
         if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/*.csv
+          git add data/*.csv backtest/tx_1min.csv backtest/tx_ticks
           git diff --cached --quiet || (git commit -m "資料快取更新" && git push)

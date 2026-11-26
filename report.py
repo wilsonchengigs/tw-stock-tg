@@ -7,6 +7,7 @@
 - REPORT_PART=alert（14:40 排程）：爆量收黑（研究 63／64b）觸發才送，附操作時間；21:30 日報有訊號時最上面列「今日有訊號觸發」與期限
 - REPORT_PART=morning（07:20 排程，備援 07:45、08:10）：夜盤跌 ≥2% 或 S&P500 前一晚跌 ≥2% 才送（候選 6「恐慌隔天做多」，研究 139、142～145），附勝率與期望值
 - 策略段落後附「觀察」：台指選擇權 Put/Call 未平倉比與研究 32 的提早進場條件（期交所，僅供觀察、未納入策略）
+- 策略段落後另附「觀察」：台股 20 日落後 S&P500 ≥10% 時顯示（研究 204、204b，僅供觀察、未納入策略）
 - 加快速度：過去的資料存在 data/（taiex_daily、pcratio、margin_ratio、taiex_hourly），每次只抓當天／當月，
   GitHub Actions 跑完把 data/*.csv commit 回來
 
@@ -391,7 +392,45 @@ def strategy_lines(date: str) -> list:
         lines += pc_lines(date, state, closes)
     except Exception as e:  # 觀察指標抓不到不影響策略段落
         print(f"P/C 失敗：{e}", file=sys.stderr)
+    try:
+        lines += divergence_lines(date, closes)
+    except Exception as e:  # 觀察指標抓不到不影響策略段落
+        print(f"台美背離失敗：{e}", file=sys.stderr)
     return lines
+
+
+# ── 觀察：台股 20 日落後美股 ≥10%（研究 204、204b，未納入策略）──────────────────────
+# 加權 20 日報酬 − S&P500 20 日報酬（用台股該日之前最後一個美股收盤）≤ -10% → 之後 5 日台股偏多。
+# 1998～2026 去叢集 38 次：5 日 +1.6%、勝率 63%；比「台股跌一樣多但美股也跌」的日子多 +2.0%（家族 p 0.001），
+# 兩段都正（1998–2012 +1.0%、2013–2026 +4.7%）。20／60 日沒有額外優勢。約一年 1～2 次，只觸發時顯示
+DIV_TH, DIV_N = 0.10, 20
+
+
+def divergence_lines(date: str, closes: list) -> list:
+    if len(closes) < DIV_N + 1 or closes[-1][0] != date:
+        return []
+    url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=3mo&interval=1d"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as res:
+        r = json.loads(res.read().decode("utf-8"))["chart"]["result"][0]
+    ny = timezone(timedelta(hours=-5))
+    us = [(datetime.fromtimestamp(t, ny).strftime("%Y%m%d"), c)
+          for t, c in zip(r["timestamp"], r["indicators"]["quote"][0]["close"]) if c]
+
+    def us_before(d):
+        prev = [c for k, c in us if k < d]
+        return prev[-1] if prev else None
+
+    a, b = us_before(closes[-DIV_N - 1][0]), us_before(date)
+    if not a or not b:
+        return []
+    tw20 = closes[-1][1] / closes[-DIV_N - 1][1] - 1
+    gap = tw20 - (b / a - 1)
+    if gap > -DIV_TH:
+        return []
+    return ["", f"👀 觀察：台股 20 日 {tw20:+.1%}、落後 S&P500 {gap:+.1%}（門檻 -{DIV_TH:.0%}）",
+            "　歷史（1998～，38 次）之後 5 日加權平均 +1.6%、勝率 63%；比同跌幅但美股也跌的情況多 +2.0%（研究 204b）；"
+            "20 日以上沒有優勢。僅供觀察，未納入策略"]
 
 
 # ── 在場時爆量收黑加碼（研究 63～64g，2026-11-24 使用者同意加入）──────────────────

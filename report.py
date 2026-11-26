@@ -347,6 +347,10 @@ def strategy_lines(date: str) -> list:
         lines += divergence_lines(date, closes)
     except Exception as e:  # 觀察指標抓不到不影響策略段落
         print(f"台美背離加碼失敗：{e}", file=sys.stderr)
+    try:
+        lines += yearend_lines(date)
+    except Exception as e:  # noqa: BLE001
+        print(f"年底加碼失敗：{e}", file=sys.stderr)
     return lines
 
 
@@ -413,6 +417,52 @@ def divergence_lines(date: str, closes: list) -> list:
                 out.append(f"　錯過今天 08:45：可在今晚夜盤（15:00～隔天 05:00，收到日報時仍在交易）或明早 08:45 補進、一樣第 {DIV_H} 天收盤出（研究 220）｜"
                            f"今天加權 {d1:+.1%}，歷史上同樣漲幅時補進：{ref}（研究 249，各組樣本少）")
             return out
+    return []
+
+
+# ── 年底加碼（研究 262、262b、263；2026-11-26 使用者同意 0.5 倍，春節那條不加）──────────────────
+# 12 月最後交易日前 3 個交易日收盤進 0.5 倍台指期，1 月第 5 個交易日收盤出；不分主策略狀態、不設停損。
+# 1998～2025 28 次：加權每筆 +2.1%、勝率 71%（家族 p 0.001）；台指期真實價 +2.2%、最差 -5.5%；2013 後較弱（約 +1.3%）。
+# 疊在現行（85% 00631L＋V+F+P+D）上 2018-06～ 65.1%→66.4%、回檔與最差單日不變（研究 263）。
+# 交易日以「平日、扣掉 1/1」近似（證交所 12/31 照常開盤）；遇颱風等臨時休市會差一天，影響很小
+YE_ADD, YE_PRE, YE_POST = 0.5, 3, 5
+
+
+def _tdays(start, end):
+    d, out = start, []
+    while d <= end:
+        if d.weekday() < 5 and not (d.month == 1 and d.day == 1):
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def yearend_lines(date: str) -> list:
+    t = datetime.strptime(date, "%Y%m%d").date()
+    if t.month not in (11, 12, 1):
+        return []
+    y = t.year - 1 if t.month == 1 else t.year
+    dec = _tdays(datetime(y, 12, 1).date(), datetime(y, 12, 31).date())
+    jan = _tdays(datetime(y + 1, 1, 1).date(), datetime(y + 1, 1, 20).date())
+    entry, exit_ = dec[-1 - YE_PRE], jan[YE_POST - 1]
+    cal = dec + jan
+    md = lambda d: f"{d.month}/{d.day}"  # noqa: E731
+    head = f"年底加碼（{md(entry)} 收盤進 {YE_ADD} 倍台指期 → {md(exit_)} 收盤出，研究 262）"
+    stat = "　1998～2025 28 次：每筆 +2.1%、勝率 71%、最差 -5.5%（台指期真實價）；2013 後較弱約 +1.3%｜不設停損、不分主策略狀態（回測，可能偏樂觀）"
+    if t < entry:
+        left = len([d for d in cal if t < d <= entry]) if t >= dec[0] else None
+        if left == 1:
+            return ["", f"📅 {head}：下個交易日（{md(entry)}）13:45 收盤前加碼（來不及就當天 15:00 夜盤或隔天 08:45 開盤）", stat]
+        if t.month == 12 and left and left <= 5:
+            return ["", f"🗓️ {head}：再 {left} 個交易日進場"]
+        return []
+    if t == entry:
+        return ["", f"🎯 {head}：今天收盤該進場；還沒進的今晚夜盤或明早 08:45 補進，一樣 {md(exit_)} 收盤出", stat]
+    if t < exit_:
+        rest = len([d for d in cal if t < d <= exit_])
+        if rest == 1:
+            return ["", f"📌 {head}：下個交易日（{md(exit_)}）13:45 收盤前平倉"]
+        return ["", f"👀 {head}：持有中，還有 {rest} 個交易日"]
     return []
 
 

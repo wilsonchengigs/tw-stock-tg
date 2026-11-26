@@ -1,6 +1,7 @@
 """建立美國重大經濟事件日曆，存 backtest/us_events.csv：date,event（美東日期）
-- FOMC：聯準會官網（2021～：fomccalendars.htm；2017～2020：fomchistorical{年}.htm），取會議最後一天（決策公布日），
+- FOMC：聯準會官網（2021～：fomccalendars.htm；2017～2020：fomchistorical{年}.htm），取會議最後一天（決策公布日），1998 起，
         不含臨時電話會議
+- CPI：ALFRED 發布日清單 us_cpi_dates.txt（FRED／BLS 擋程式下載，手動取得）
 - 非農（NFP）：BLS 網站擋爬蟲，用發布規則推算——「包含 12 日那一週的週六」＋20 天的星期五；
         遇美國假日順延到下週五。少數政府關門延後的月份（如 2013-10、2025-10／11）會不準
 台灣時間：非農 20:30／21:30（夏令／冬令），FOMC 隔天 02:00／03:00 → 都落在台指期夜盤
@@ -42,12 +43,12 @@ def fomc():
                 dd = date(y, mo, int(d2))
                 if dd <= date.today():
                     out.add(dd)
-    for y in range(2017, 2021):
+    for y in range(1998, 2021):  # 2008 前常是一天的會議（"March 22 Meeting"）
         txt = get(f"https://www.federalreserve.gov/monetarypolicy/fomchistorical{y}.htm")
-        for m1, m2, d1, d2 in re.findall(r"\b([A-Z][a-z]+)(?:/([A-Z][a-z]+))? (\d{1,2})-(\d{1,2}) Meeting", txt):
+        for m1, m2, d1, d2 in re.findall(r"\b([A-Z][a-z]+)(?:/([A-Z][a-z]+))? (\d{1,2})(?:-(\d{1,2}))? Meeting", txt):
             mo = month_no(m2 or m1)
             if mo:
-                out.add(date(y, mo, int(d2)))
+                out.add(date(y, mo, int(d2 or d1)))
     return sorted(out)
 
 
@@ -67,7 +68,7 @@ def us_holidays(y):
             nth(0, 10, 2), obs(date(y, 11, 11)), nth(3, 11, 4), obs(date(y, 12, 25))}
 
 
-def nfp(y0=2017):
+def nfp(y0=1998):
     out = []
     for y in range(y0, date.today().year + 1):
         for mo in range(1, 13):
@@ -83,12 +84,14 @@ def nfp(y0=2017):
 
 def main():
     rows = [(d.isoformat(), "FOMC") for d in fomc()] + [(d.isoformat(), "NFP") for d in nfp()]
+    # CPI：ALFRED 發布日（https://alfred.stlouisfed.org/release/downloaddates?rid=10），1998 起每月一筆（同月兩筆時前一筆多為季節因子修正，取後一筆）
+    rows += [(d.strip(), "CPI") for d in open(os.path.join(HERE, "us_cpi_dates.txt"), encoding="utf-8") if d.strip()]
     rows.sort()
     with open(os.path.join(HERE, "us_events.csv"), "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["date", "event"])
         w.writerows(rows)
-    print(len(rows), "筆；FOMC", sum(r[1] == "FOMC" for r in rows), "、NFP", sum(r[1] == "NFP" for r in rows))
+    print(len(rows), "筆；", {k: sum(r[1] == k for r in rows) for k in ("FOMC", "NFP", "CPI")})
     print("FOMC 近期：", [r[0] for r in rows if r[1] == "FOMC"][-8:])
     print("FOMC 2017-2018：", [r[0] for r in rows if r[1] == "FOMC" and r[0] < "2019"])
     print("NFP 近期：", [r[0] for r in rows if r[1] == "NFP"][-8:])

@@ -1,5 +1,6 @@
 name: 每月規則健康檢查
 # 每月 1 日台灣 09:30 更新回測資料、跑研究 164（恐慌做多／爆量收黑／外資期貨 最近 N 筆在歷史上的分位），結果寄 TG
+# 第二則（2026-11-26 使用者同意）：主策略燈號（研究 199）＋資料稽核（研究 198），backtest/health_main.py
 # GitHub 排程可能延遲，延遲幾小時不影響；也可手動 workflow_dispatch
 on:
   schedule:
@@ -25,6 +26,10 @@ jobs:
           python -X utf8 backtest/build_tx_ohlc.py
           python -X utf8 backtest/build_turnover.py
           python -X utf8 backtest/build_tx_inst_oi.py
+      - name: 更新 Yahoo 價格（加權、0050、00631L；data.py 只在檔案不存在時下載）
+        run: |
+          rm -f backtest/TWII.json backtest/0050.TW.json backtest/00631L.TW.json
+          python -X utf8 -c "import sys; sys.path.insert(0, 'backtest'); import data; data.series()"
       - name: 健康檢查並寄 TG
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -32,12 +37,20 @@ jobs:
         run: |
           python -X utf8 backtest/research_164_上線規則健康檢查.py
           python -X utf8 -c "import report; report.send(open('backtest/結果_研究164_上線規則健康檢查.txt', encoding='utf-8').read())"
+      - name: 主策略燈號＋資料稽核並寄 TG
+        if: ${{ !cancelled() }}
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python -X utf8 backtest/health_main.py
+          python -X utf8 -c "import report; report.send(open('backtest/結果_每月主策略健檢.txt', encoding='utf-8').read())"
       - name: 存回資料
         if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backtest/tx_daily_ohlc.csv backtest/turnover_daily.csv backtest/tx_inst_oi.csv
+          git add backtest/tx_daily_ohlc.csv backtest/turnover_daily.csv backtest/tx_inst_oi.csv backtest/TWII.json backtest/0050.TW.json backtest/00631L.TW.json
           git diff --cached --quiet && exit 0
           git commit -m "每月健康檢查：回測資料更新"
           for i in 1 2 3; do git pull --rebase && git push && exit 0; sleep 10; done

@@ -37,7 +37,11 @@ def rd(path):
     return list(csv.DictReader(open(path, encoding="utf-8")))
 
 
+SECTIONS = []  # (標題, 明細)；給每月健康檢查（health_main.py）讀
+
+
 def section(L, title, items, recent_only_detail=True, cap=25):
+    SECTIONS.append((title, items))
     rec = [x for x in items if x[0] >= RECENT]
     L.append(f"\n【{title}】共 {len(items)} 筆（2025 起 {len(rec)} 筆）")
     for x in (rec if recent_only_detail else items)[-cap:]:

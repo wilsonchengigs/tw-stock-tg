@@ -365,17 +365,17 @@ def strategy_lines(date: str) -> list:
     px = closes[-1][1]
     up, dn = ma_n * (1 + STRATEGY_ENTRY_BAND), ma_x * (1 - STRATEGY_EXIT_BAND)
     is_friday = datetime.strptime(date, "%Y%m%d").weekday() == 4
-    lines = ["", f"🧭 策略（進場 MA{STRATEGY_ENTRY_MA}+{STRATEGY_ENTRY_BAND * 100:g}%、出場 MA{STRATEGY_EXIT_MA}-{STRATEGY_EXIT_BAND * 100:g}%，每週五收盤判斷；融資過熱每天檢查）"]
-    lines.append(f"指數 {px:,.0f}｜進場線 {up:,.0f}（MA{STRATEGY_ENTRY_MA} {ma_n:,.0f}）｜出場線 {dn:,.0f}（MA{STRATEGY_EXIT_MA} {ma_x:,.0f}）")
+    # 2026-11-26 使用者要求：日報只講觸發了哪條規則、建議什麼操作；沒觸發的規則不逐條列
+    lines = [""]
     hold = STRATEGY_ON if state else STRATEGY_OFF
     since = f"（{int(switched[4:6])}/{int(switched[6:])} 起）" if switched else ""
     dev = heat_on(heat, date)
     if dev is not None:
         last = max(k for k in heat if k <= date)
         stale = "" if last == date else f"（用 {int(last[4:6])}/{int(last[6:])} 的融資資料）"
-        status = "🔥 過熱：出場、不進場" if is_hot(dev) else "正常"
-        lines.append(f"融資過熱濾網：融資÷指數 比 {HEAT_N} 日平均 {dev[0]:+.1%}（門檻 +{HEAT_TH:.1%}）、z {dev[1]:+.2f}（門檻 {HEAT_Z:g}）→ {status}{stale}")
-    lines.append(f"應持有：{hold}{since}")
+        if is_hot(dev):
+            lines.append(f"🔥 融資過熱濾網觸發：融資÷指數 比 {HEAT_N} 日平均 {dev[0]:+.1%}（門檻 +{HEAT_TH:.1%}）、z {dev[1]:+.2f}（門檻 {HEAT_Z:g}）→ 出場、不進場{stale}")
+    lines.append(f"🧭 主策略應持有：{hold}{since}")
     if switched == date and not state and not is_friday:
         lines.append(f"⚠️ 融資過熱（每日檢查）：下一個交易日收盤 全部賣出 → {STRATEGY_OFF}")
         lines.append("　部位：00631L 全部賣出、轉現金｜歷史（1997～，55 段空手期）指數平均 -2.6%、2 倍部位等於避開約 -4.0%；約一半的空手期指數其實是漲的（假訊號），靠避開大跌取勝")
@@ -383,12 +383,6 @@ def strategy_lines(date: str) -> list:
         action = f"買進 → {STRATEGY_ON}" if state else f"全部賣出 → {STRATEGY_OFF}"
         lines.append(f"⚠️ 本週訊號切換：下一個交易日收盤 {action}")
         lines.append("　部位：資金 100% 買 00631L（約 2 倍曝險）｜歷史（1997～，54 次）勝率 52%、期望值每次 +19.1%（中位 +0.3%）、平均賺 +43.6%／平均賠 -7.3%、平均抱約 53 個交易日——小賠多次、大賺少次" if state else "　部位：00631L 全部賣出、轉現金｜歷史（1997～，55 段空手期）指數平均 -2.6%、2 倍部位等於避開約 -4.0%；約一半的空手期指數其實是漲的（假訊號），靠避開大跌取勝")
-    elif is_friday:
-        lines.append("本週判斷：不用動作")
-    else:
-        need = up if not state else dn
-        word_ = "站上" if not state else "跌破"
-        lines.append(f"週五收盤{word_} {need:,.0f} 才切換（目前距離 {(need / px - 1):+.1%}）")
     try:
         lines += overlay_lines(date, closes, heat)
     except Exception as e:  # 加碼段落失敗不影響策略段落
@@ -480,9 +474,7 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
     prev = net[-2][0]
     if third_wed(date) or third_wed(prev):
         # 研究 79：結算日（第三個星期三）與次日的未平倉變化含到期部位消失，訊號不採用
-        if abs(z) > FOREIGN_Z:
-            lines.append("　結算日或次日：未平倉變化含到期部位，研究 79 顯示此時訊號不可靠，不採用")
-        return lines
+        return []  # 研究 79：結算日與次日訊號不採用
     if z > FOREIGN_Z:
         skip = short_skip(closes, heat, date)
         if skip:
@@ -497,11 +489,7 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
                          "可和爆量收黑加碼同時持有（研究 135：兩者效果相加、互不干擾）")
             lines.append("　回測（v3、2018-06～）：加 0.5 倍 48.2%→53.5%、回檔 -27.1%→-27.5%；扣掉挑選後家族 p 0.04（研究 129，中等證據，所以只加 0.5 倍）")
             lines.append("　勝率／期望值（每筆，台指期真實價、扣成本）：42 筆 勝率 83%、期望值 +1.43%（平均賺 +1.92%／賠 -1.03%、最差 -3.0%）")
-        elif on_now:
-            lines.append(f"　研究 128 雙指標：交易淨額 z {zf:+.2f} 未確認 → 不加碼（單看未平倉時加碼回檔較深 -33%）")
-    elif z < -FOREIGN_Z:
-        lines.append("　外資大加空：歷史上之後 1～10 天偏弱（研究 79：排除結算日後，在場時「減碼」已無明顯好處，僅供參考）")
-    return lines
+    return lines if any(ln.startswith(("🎯", "🔔", "⛔")) for ln in lines) else []  # 沒有操作建議就不顯示
 
 
 def _overlay_core(date: str, closes: list, heat: dict) -> list:
@@ -530,7 +518,7 @@ def _overlay_core(date: str, closes: list, heat: dict) -> list:
         if on_now:
             lines.append(f"🔔 加碼訊號成立：明早 8:45 開盤（下午 14:40 提醒時已在夜盤進場就不用再進）加台指期 1 倍名目（資金 × 1；資金 100 萬 ≈ 微台 2～3 口），"
                          f"抱 {OVERLAY_H} 個交易日後收盤平倉；現行策略出場則一起平；3% 停損可選")
-            lines.append("　勝率／期望值（台指期真實價、2018-06～、扣成本）：7 筆 勝率 86%、期望值每筆 +3.3%（平均賺 +4.3%／賠 -2.5%）；樣本少，28 年約 20 次獨立事件、最早一段為負，所以維持 1 倍不再提高")
+            lines.append("　勝率／期望值（台指期真實價、1998～、扣成本，研究 172b）：34 筆 勝率 71%、期望值每筆 +2.16%（平均賺 +4.15%／賠 -2.63%、最差 -7.0%）；1998–2007 63%／+1.68%，近年較好；維持 1 倍不再提高")
             # 觀察（研究 64i／64j，未納入規則）：離出場線 ≥5% 時加碼，真實價格回檔與不加碼相同、報酬幾乎不變
             exit_line = sum(v for _, v in closes[-STRATEGY_EXIT_MA:]) / STRATEGY_EXIT_MA * (1 - STRATEGY_EXIT_BAND)
             gap = cdict[date] / exit_line - 1
@@ -560,7 +548,7 @@ def _overlay_core(date: str, closes: list, heat: dict) -> list:
                 lines.append(f"🎯 獨立短線持有中：{int(days[j][4:6])}/{int(days[j][6:])} 的爆量收黑，已過 {held}/{SHORT_HOLD} 個交易日"
                              + ("，今天收盤平倉" if held >= SHORT_HOLD else f"；停損參考：指數跌破約 {entry * (1 - SHORT_STOP):,.0f}"))
                 break
-    return lines
+    return lines if len(lines) > 2 else []  # 只有標題＝沒觸發、沒持有 → 不顯示
 
 
 # ── 下午即時提醒（REPORT_PART=alert，14:40 排程）：爆量收黑收盤就知道，21:30 日報時夜盤 15:00 開盤已過 ──────────
@@ -600,7 +588,7 @@ def alert_lines(date: str, retry: bool) -> list:
               "；多頭且融資正常時歷史 33 筆、勝率 91%、每筆 +1.65%（研究 105）")]
     if on_now:
         lines.append(f"🔔 主策略在場：再加台指期 1 倍名目（資金 100 萬 ≈ 微台 2～3 口），抱 {OVERLAY_H} 個交易日（研究 64b）；主策略出場就一起平")
-        lines.append("　勝率／期望值（2018-06～、扣成本）：7 筆 勝率 86%、期望值每筆 +3.3%（平均賺 +4.3%／賠 -2.5%）；樣本少")
+        lines.append("　勝率／期望值（1998～、扣成本，研究 172b）：34 筆 勝率 71%、期望值每筆 +2.16%（平均賺 +4.15%／賠 -2.63%、最差 -7.0%）")
     else:
         lines.append("主策略空手：主策略不加碼（研究 64）" + ("，獨立短線也跳過 → 今天不動作" if skip else "，只做獨立短線"))
     lines.append("（融資要 21:00 才公布，這裡用前一天的融資判斷過熱；若 21:30 日報改說「融資過熱、建議跳過」，夜盤已買的可明早開盤平掉）")
@@ -744,17 +732,14 @@ def pc_lines(date: str, state: bool, closes: list) -> list:
     hot = any(p is not None and p >= PC_PCT for p in recent)
     lines = ["", f"👀 觀察：台指選 P/C 未平倉比 {vals[-1]:.0f}%（過去一年第 {today * 100:.0f} 百分位）"]
     if state:
-        return lines
+        return []
     lo = min(px for _, px in closes[-PC_LOOKBACK - 1:])
     px = closes[-1][1]
     if hot and px > lo * (1 + PC_REBOUND):
         lines.append(f"⚡ 提早進場條件成立（近 {PC_LOOKBACK} 日 P/C 曾達前 5%＋從低點 {lo:,.0f} 反彈 {px / lo - 1:.1%}）；"
                      f"僅供觀察，未納入策略（研究 32：停損 {lo:,.0f}）")
-    elif hot:
-        lines.append(f"P/C 近 {PC_LOOKBACK} 日曾達前 5%，等指數從低點 {lo:,.0f} 反彈 {PC_REBOUND:.0%}（{lo * (1 + PC_REBOUND):,.0f}）才算成立")
-    else:
-        lines.append(f"提早進場條件：P/C 達過去一年前 5%（目前未達）＋指數從近 {PC_LOOKBACK} 日低點反彈 {PC_REBOUND:.0%}")
-    return lines
+        return lines
+    return []
 
 
 def institutional(date: str):
@@ -1069,10 +1054,15 @@ def main():
             print(f"恐慌部位檢查失敗：{e}", file=sys.stderr)
     # 有要操作的訊號就放到最上面並附期限，免得被長報告淹沒
     acts = [ln.strip() for ln in body if ln.strip().startswith(("🔔", "🎯", "⚠️"))]
+    if part in ("close", "all") and not acts:
+        body.append("✅ 今天沒有規則觸發：維持現有部位，不用動作")
     head = [f"📊 {md} {title}{late}"]
     if acts:
-        when = ("⏰ 期限：主策略（00631L）今天收盤前下單；台指期今天 8:45 開盤（補發時已過開盤就用市價）" if late else
-                "⏰ 期限：主策略（00631L）明天收盤前下單；台指期明早 8:45 開盤（夜盤到明早 5:00 也能下，但回測是用開盤價）")
+        main_ = any(a.startswith("⚠️") for a in acts)
+        fut_ = any(a.startswith(("🔔", "🎯")) for a in acts)
+        when = "⏰ 期限：" + "；".join(
+            ([("主策略（00631L）今天收盤前下單" if late else "主策略（00631L）明天收盤前下單")] if main_ else [])
+            + ([("台指期今天 8:45 開盤（補發時已過開盤就用市價）" if late else "台指期明早 8:45 開盤")] if fut_ else []))
         head += ["", f"🚨 {md} 有訊號觸發："] + [f"・{a}" for a in acts] + [when]
     text = "\n".join(head + body)
     print(text)

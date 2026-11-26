@@ -7,7 +7,7 @@
 - REPORT_PART=alert（14:40 排程）：爆量收黑（研究 63／64b）觸發才送，附操作時間；21:30 日報有訊號時最上面列「今日有訊號觸發」與期限
 - REPORT_PART=morning（07:20 排程，備援 07:45、08:10）：夜盤跌 ≥2% 或 S&P500 前一晚跌 ≥2% 才送（候選 6「恐慌隔天做多」，研究 139、142～145），附勝率與期望值
 - 策略段落後附「觀察」：台指選擇權 Put/Call 未平倉比與研究 32 的提早進場條件（期交所，僅供觀察、未納入策略）
-- 策略段落後另附「觀察」：台股 20 日落後 S&P500 ≥10% 時顯示（研究 204、204b，僅供觀察、未納入策略）
+- 台美背離加碼（研究 204～205c）：台股 20 日落後 S&P500 ≥10% → 隔天開盤加 0.5 倍台指期、抱 5 個交易日
 - 加快速度：過去的資料存在 data/（taiex_daily、pcratio、margin_ratio、taiex_hourly），每次只抓當天／當月，
   GitHub Actions 跑完把 data/*.csv commit 回來
 
@@ -395,15 +395,16 @@ def strategy_lines(date: str) -> list:
     try:
         lines += divergence_lines(date, closes)
     except Exception as e:  # 觀察指標抓不到不影響策略段落
-        print(f"台美背離失敗：{e}", file=sys.stderr)
+        print(f"台美背離加碼失敗：{e}", file=sys.stderr)
     return lines
 
 
-# ── 觀察：台股 20 日落後美股 ≥10%（研究 204、204b，未納入策略）──────────────────────
-# 加權 20 日報酬 − S&P500 20 日報酬（用台股該日之前最後一個美股收盤）≤ -10% → 之後 5 日台股偏多。
-# 1998～2026 去叢集 38 次：5 日 +1.6%、勝率 63%；比「台股跌一樣多但美股也跌」的日子多 +2.0%（家族 p 0.001），
-# 兩段都正（1998–2012 +1.0%、2013–2026 +4.7%）。20／60 日沒有額外優勢。約一年 1～2 次，只觸發時顯示
-DIV_TH, DIV_N = 0.10, 20
+# ── 台美背離加碼（研究 204～205c，2026-11-26 依「更好就直接更新」納入）──────────────────
+# 加權 20 日報酬 − S&P500 20 日報酬（用台股該日之前最後一個美股收盤）≤ -10% → 隔天 08:45 開盤加 0.5 倍台指期，
+# 抱到第 5 個交易日收盤出；持有中再觸發不加碼、不延長。不分主策略狀態（38 次中 35 次主策略空手）。
+# 1998～ 去叢集 38 次：比「台股跌一樣多但美股也跌」多 +2.0%（家族 p 0.001，兩段都正）；疊在 V+F+P 上（2018-06～）
+# 11 筆、每筆 +3.2%、勝率 82%，年化 70.4%→73.8%、回檔不變（家族 p 0.002）；1998–2018 樣本外每筆約 +0.9%、勝率約 52%（較弱）
+DIV_TH, DIV_N, DIV_ADD, DIV_H = 0.10, 20, 0.5, 5
 
 
 def divergence_lines(date: str, closes: list) -> list:
@@ -421,16 +422,38 @@ def divergence_lines(date: str, closes: list) -> list:
         prev = [c for k, c in us if k < d]
         return prev[-1] if prev else None
 
-    a, b = us_before(closes[-DIV_N - 1][0]), us_before(date)
-    if not a or not b:
+    def gap_at(k):  # closes 第 k 天（負索引）的背離
+        u0, u1 = us_before(closes[k - DIV_N][0]), us_before(closes[k][0])
+        if not u0 or not u1:
+            return None
+        tw = closes[k][1] / closes[k - DIV_N][1] - 1
+        return tw, tw - (u1 / u0 - 1)
+
+    # 從 30 天前往後模擬：觸發日 D → D+1 開盤進、D+DIV_H 收盤出，持有中再觸發不算
+    span = min(30, len(closes) - DIV_N - 1)
+    entry = None  # 進場訊號日的索引（負索引）
+    for k in range(-span, 0):
+        gk = gap_at(k)
+        if entry is not None and k - entry > DIV_H:
+            entry = None
+        if entry is None and gk and gk[1] <= -DIV_TH:
+            entry = k
+    today = gap_at(-1)
+    if not today:
         return []
-    tw20 = closes[-1][1] / closes[-DIV_N - 1][1] - 1
-    gap = tw20 - (b / a - 1)
-    if gap > -DIV_TH:
-        return []
-    return ["", f"👀 觀察：台股 20 日 {tw20:+.1%}、落後 S&P500 {gap:+.1%}（門檻 -{DIV_TH:.0%}）",
-            "　歷史（1998～，38 次）之後 5 日加權平均 +1.6%、勝率 63%；比同跌幅但美股也跌的情況多 +2.0%（研究 204b）；"
-            "20 日以上沒有優勢。僅供觀察，未納入策略"]
+    tw20, gap = today
+    if entry == -1:
+        return ["", f"🎯 台美背離加碼：台股 20 日 {tw20:+.1%}、落後 S&P500 {gap:+.1%}（門檻 -{DIV_TH:.0%}）→ 明早 08:45 開盤加 {DIV_ADD} 倍台指期，抱到第 {DIV_H} 個交易日收盤出",
+                f"　歷史 2018～ 11 筆每筆 +3.2%、勝率 82%（最差 -9.9%，2026-11-16）；"
+                "1998–2018 較弱（每筆約 +0.9%、勝率約 52%）（研究 204～205c）"]
+    if entry is not None:
+        held = -1 - entry  # 已過幾個交易日（進場日＝1）
+        sd = closes[entry][0]
+        if held == DIV_H - 1:
+            return ["", f"📌 台美背離加碼（{int(sd[4:6])}/{int(sd[6:])} 觸發）：明天 13:45 收盤前平倉 {DIV_ADD} 倍台指期（第 {DIV_H} 個交易日）"]
+        if held < DIV_H - 1:
+            return ["", f"👀 台美背離加碼持有中（{int(sd[4:6])}/{int(sd[6:])} 觸發，第 {held} 天／{DIV_H}；目前背離 {gap:+.1%}）：不加碼、不延長"]
+    return []
 
 
 # ── 在場時爆量收黑加碼（研究 63～64g，2026-11-24 使用者同意加入）──────────────────
@@ -1092,7 +1115,7 @@ def main():
         except Exception as e:  # noqa: BLE001
             print(f"恐慌部位檢查失敗：{e}", file=sys.stderr)
     # 有要操作的訊號就放到最上面並附期限，免得被長報告淹沒
-    acts = [ln.strip() for ln in body if ln.strip().startswith(("🔔", "🎯", "⚠️"))]
+    acts = [ln.strip() for ln in body if ln.strip().startswith(("🔔", "🎯", "⚠️", "📌"))]
     if part in ("close", "all") and not acts:
         body.append("✅ 今天沒有規則觸發：維持現有部位，不用動作")
     head = [f"📊 {md} {title}{late}"]
@@ -1101,7 +1124,8 @@ def main():
         fut_ = any(a.startswith(("🔔", "🎯")) for a in acts)
         when = "⏰ 期限：" + "；".join(
             ([("主策略（00631L）今天收盤前下單" if late else "主策略（00631L）明天收盤前下單")] if main_ else [])
-            + ([("台指期今天 8:45 開盤（補發時已過開盤就用市價）" if late else "台指期明早 8:45 開盤")] if fut_ else []))
+            + ([("台指期今天 8:45 開盤（補發時已過開盤就用市價）" if late else "台指期明早 8:45 開盤")] if fut_ else [])
+            + (["台美背離加碼明天 13:45 收盤前平倉"] if any(a.startswith("📌") for a in acts) else []))
         head += ["", f"🚨 {md} 有訊號觸發："] + [f"・{a}" for a in acts] + [when]
     text = "\n".join(head + body)
     print(text)

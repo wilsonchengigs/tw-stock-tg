@@ -378,9 +378,11 @@ def strategy_lines(date: str) -> list:
     lines.append(f"應持有：{hold}{since}")
     if switched == date and not state and not is_friday:
         lines.append(f"⚠️ 融資過熱（每日檢查）：下一個交易日收盤 全部賣出 → {STRATEGY_OFF}")
+        lines.append("　部位：00631L 全部賣出、轉現金｜歷史（1997～，55 段空手期）指數平均 -2.6%、2 倍部位等於避開約 -4.0%；約一半的空手期指數其實是漲的（假訊號），靠避開大跌取勝")
     elif is_friday and switched == date:
         action = f"買進 → {STRATEGY_ON}" if state else f"全部賣出 → {STRATEGY_OFF}"
         lines.append(f"⚠️ 本週訊號切換：下一個交易日收盤 {action}")
+        lines.append("　部位：資金 100% 買 00631L（約 2 倍曝險）｜歷史（1997～，54 次）勝率 52%、期望值每次 +19.1%（中位 +0.3%）、平均賺 +43.6%／平均賠 -7.3%、平均抱約 53 個交易日——小賠多次、大賺少次" if state else "　部位：00631L 全部賣出、轉現金｜歷史（1997～，55 段空手期）指數平均 -2.6%、2 倍部位等於避開約 -4.0%；約一半的空手期指數其實是漲的（假訊號），靠避開大跌取勝")
     elif is_friday:
         lines.append("本週判斷：不用動作")
     else:
@@ -486,7 +488,7 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
         if skip:
             lines.append(f"⛔ 外資回補短線（研究 106）建議跳過：{skip.split('（')[0]}（研究 106：空頭時抱 5 天每筆 -1.9%）")
         else:
-            lines.append("🎯 獨立短線（研究 106，2019～ 只有 7 年、小額）：明早 8:45 開盤做多台指期近月，抱 5 個交易日後收盤平倉"
+            lines.append("🎯 獨立短線（研究 106，2019～ 只有 7 年、小額）：明早 8:45 開盤做多台指期近月 0.5 倍名目（樣本少、建議小額），抱 5 個交易日後收盤平倉"
                          "（多頭時歷史 57 筆、勝率 81%、每筆 +1.29%；前後段都正。抱 1 天在 2023 後已無效）")
         lines.append("　外資大回補／加多：歷史上之後 1～10 天偏強")
         if on_now and zf > FOREIGN_Z:
@@ -494,6 +496,7 @@ def foreign_fut_lines(date: str, closes: list, heat: dict) -> list:
             lines.append("🔔 外資期貨加碼（雙指標成立）：明早 8:45 開盤加台指期近月 0.5 倍名目（資金 × 0.5），抱 5 個交易日後收盤平倉；現行策略出場則一起平；"
                          "可和爆量收黑加碼同時持有（研究 135：兩者效果相加、互不干擾）")
             lines.append("　回測（v3、2018-06～）：加 0.5 倍 48.2%→53.5%、回檔 -27.1%→-27.5%；扣掉挑選後家族 p 0.04（研究 129，中等證據，所以只加 0.5 倍）")
+            lines.append("　勝率／期望值（每筆，台指期真實價、扣成本）：42 筆 勝率 83%、期望值 +1.43%（平均賺 +1.92%／賠 -1.03%、最差 -3.0%）")
         elif on_now:
             lines.append(f"　研究 128 雙指標：交易淨額 z {zf:+.2f} 未確認 → 不加碼（單看未平倉時加碼回檔較深 -33%）")
     elif z < -FOREIGN_Z:
@@ -525,8 +528,9 @@ def _overlay_core(date: str, closes: list, heat: dict) -> list:
             active = j
     if vr >= OVERLAY_K and down:
         if on_now:
-            lines.append(f"🔔 加碼訊號成立：明早 8:45 開盤（下午 14:40 提醒時已在夜盤進場就不用再進）加台指期 0.5～1 倍名目（資金 × 0.5～1；資金 200 萬 ≈ 小台 1 口或微台 5 口），"
+            lines.append(f"🔔 加碼訊號成立：明早 8:45 開盤（下午 14:40 提醒時已在夜盤進場就不用再進）加台指期 1 倍名目（資金 × 1；資金 100 萬 ≈ 微台 2～3 口），"
                          f"抱 {OVERLAY_H} 個交易日後收盤平倉；現行策略出場則一起平；3% 停損可選")
+            lines.append("　勝率／期望值（台指期真實價、2018-06～、扣成本）：7 筆 勝率 86%、期望值每筆 +3.3%（平均賺 +4.3%／賠 -2.5%）；樣本少，28 年約 20 次獨立事件、最早一段為負，所以維持 1 倍不再提高")
             # 觀察（研究 64i／64j，未納入規則）：離出場線 ≥5% 時加碼，真實價格回檔與不加碼相同、報酬幾乎不變
             exit_line = sum(v for _, v in closes[-STRATEGY_EXIT_MA:]) / STRATEGY_EXIT_MA * (1 - STRATEGY_EXIT_BAND)
             gap = cdict[date] / exit_line - 1
@@ -538,7 +542,7 @@ def _overlay_core(date: str, closes: list, heat: dict) -> list:
         if skip:
             lines.append(f"⛔ 獨立短線（研究 63d／105）建議跳過：{skip}")
         else:
-            lines.append(f"🎯 獨立短線（研究 63d／63g／105，與主策略分開、小額）：明早 8:45 開盤買台指期近月（下午提醒時已在夜盤買就不用再買），抱 {SHORT_HOLD} 個交易日後收盤平倉，"
+            lines.append(f"🎯 獨立短線（研究 63d／63g／105，與主策略分開、小額）：明早 8:45 開盤買台指期近月 0.5 倍名目（樣本少、建議小額；下午提醒時已在夜盤買就不用再買），抱 {SHORT_HOLD} 個交易日後收盤平倉，"
                          f"停損 {SHORT_STOP:.0%}（多頭且融資正常時歷史 33 筆、勝率 91%、每筆 +1.65%；一年約 1～2 次）")
     elif active is not None and on_now:
         held = n - 1 - active
@@ -592,10 +596,11 @@ def alert_lines(date: str, retry: bool) -> list:
              "⏰ 操作時間：今天 15:00 夜盤開盤進場最好（研究 63d 每筆約 +1.6%）；來不及就明早 8:45 開盤（約 +1.1%）；"
              "明天收盤才進只剩約 +0.4%，就不要追了",
              (f"⛔ 獨立短線建議跳過：{skip}" if skip else
-              f"🎯 獨立短線：買台指期近月（小額），抱 {SHORT_HOLD} 個交易日後收盤平倉，停損 {SHORT_STOP:.0%}（約指數 {px * (1 - SHORT_STOP):,.0f}）"
+              f"🎯 獨立短線：買台指期近月 0.5 倍名目（樣本少、建議小額），抱 {SHORT_HOLD} 個交易日後收盤平倉，停損 {SHORT_STOP:.0%}（約指數 {px * (1 - SHORT_STOP):,.0f}）"
               "；多頭且融資正常時歷史 33 筆、勝率 91%、每筆 +1.65%（研究 105）")]
     if on_now:
-        lines.append(f"🔔 主策略在場：再加台指期 0.5～1 倍名目，抱 {OVERLAY_H} 個交易日（研究 64b）；主策略出場就一起平")
+        lines.append(f"🔔 主策略在場：再加台指期 1 倍名目（資金 100 萬 ≈ 微台 2～3 口），抱 {OVERLAY_H} 個交易日（研究 64b）；主策略出場就一起平")
+        lines.append("　勝率／期望值（2018-06～、扣成本）：7 筆 勝率 86%、期望值每筆 +3.3%（平均賺 +4.3%／賠 -2.5%）；樣本少")
     else:
         lines.append("主策略空手：主策略不加碼（研究 64）" + ("，獨立短線也跳過 → 今天不動作" if skip else "，只做獨立短線"))
     lines.append("（融資要 21:00 才公布，這裡用前一天的融資判斷過熱；若 21:30 日報改說「融資過熱、建議跳過」，夜盤已買的可明早開盤平掉）")

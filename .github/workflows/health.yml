@@ -23,14 +23,17 @@ jobs:
           curl -sfL -o backtest/margin_tw.csv https://raw.githubusercontent.com/salmonmisosoup/leverage-dashboard/HEAD/data/margin_tw.csv
           curl -sfL -A "Mozilla/5.0" -o backtest/GSPC.json.raw "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?period1=0&period2=9999999999&interval=1d"
           python -c "import json; d=json.load(open('backtest/GSPC.json.raw')); json.dump(d['chart']['result'][0], open('backtest/GSPC.json','w'))"
-          python -X utf8 backtest/build_tx_ohlc.py
-          python -X utf8 backtest/build_turnover.py
-          python -X utf8 backtest/build_tx_inst_oi.py
+          # 各資料源獨立：一個失敗（例如 FinMind 回 402 額度用完）只印警告，用 repo 裡的舊資料繼續
+          python -X utf8 backtest/build_tx_ohlc.py || echo "::warning::build_tx_ohlc 失敗，沿用舊資料"
+          python -X utf8 backtest/build_turnover.py || echo "::warning::build_turnover 失敗，沿用舊資料"
+          python -X utf8 backtest/build_tx_inst_oi.py || echo "::warning::build_tx_inst_oi 失敗（FinMind），沿用舊資料"
       - name: 更新 Yahoo 價格（加權、0050、00631L；data.py 只在檔案不存在時下載）
+        if: ${{ !cancelled() }}
         run: |
           rm -f backtest/TWII.json backtest/0050.TW.json backtest/00631L.TW.json
           python -X utf8 -c "import sys; sys.path.insert(0, 'backtest'); import data; data.series()"
       - name: 健康檢查並寄 TG
+        if: ${{ !cancelled() }}
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}

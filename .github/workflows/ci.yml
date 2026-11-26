@@ -15,6 +15,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: 語法檢查（日報主程式、研究共用模組）
-        run: python -m py_compile report.py backtest/bt.py backtest/data.py backtest/strategy_v3.py
+        run: python -m py_compile report.py tgio.py backtest/bt.py backtest/data.py backtest/strategy_v3.py
       - name: 單元測試
         run: python -X utf8 -m unittest discover -s tests -v

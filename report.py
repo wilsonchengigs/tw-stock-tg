@@ -16,7 +16,6 @@
 環境變數：TG_BOT_TOKEN、TG_CHAT_ID；REPORT_PART；REPORT_DATE（選填，YYYYMMDD，測試用）
 只用 Python 標準函式庫。
 """
-import csv
 import json
 import os
 import re
@@ -27,59 +26,14 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+from tgio import DATA_DIR, UA, get_json, load_csv, num, save_csv, send, tables_of, urlopen_retry
+
 TW = timezone(timedelta(hours=8))
-UA = {"User-Agent": "Mozilla/5.0 (tw-stock-tg report)"}
 # 資料還沒公布時每 5 分鐘再試一次，最多等 30 分鐘
 RETRY_TIMES = 6
 RETRY_WAIT_SEC = 300
 
 
-_JSON_MEMO = {}  # 同一次執行裡同一個網址只抓一次（例如當月 FMTQIK 成交量與指數都要用）
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-
-
-def urlopen_retry(req, tries: int = 3, retry_post: bool = False):
-    """urlopen（逾時 30 秒）＋退避重試：429／5xx／連線錯誤等 2、4 秒再試，其他 HTTP 錯誤（404 等）直接丟。
-    POST（Telegram）預設只在 429／5xx 重試——連線逾時時訊息可能已送出，重試會重複"""
-    for k in range(tries):
-        try:
-            return urllib.request.urlopen(req, timeout=30)
-        except urllib.error.HTTPError as e:
-            if k == tries - 1 or not (e.code == 429 or e.code >= 500):
-                raise
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
-            if k == tries - 1 or (req.data is not None and not retry_post):
-                raise
-        time.sleep(2 ** (k + 1))
-
-
-def get_json(url: str) -> dict:
-    if url in _JSON_MEMO:
-        return _JSON_MEMO[url]
-    req = urllib.request.Request(url, headers=UA)
-    with urlopen_retry(req) as res:
-        data = json.loads(res.read().decode("utf-8"))
-    time.sleep(2)  # 證交所對短時間大量請求會擋，間隔一下
-    if data.get("stat") == "OK":
-        _JSON_MEMO[url] = data
-    return data
-
-
-def load_csv(name: str) -> dict:
-    """data/{name}：第一欄日期 YYYYMMDD → 其餘欄位（字串）"""
-    path = os.path.join(DATA_DIR, name)
-    if not os.path.exists(path):
-        return {}
-    with open(path, encoding="utf-8", newline="") as f:
-        lines = [r for r in csv.reader(f) if r][1:]
-    return {r[0]: r[1:] for r in lines}
-
-
-def save_csv(name: str, header: str, rows: dict):
-    with open(os.path.join(DATA_DIR, name), "w", encoding="utf-8", newline="") as f:
-        f.write(header + "\n")
-        for d in sorted(rows):
-            f.write(",".join([d] + [str(x) for x in rows[d]]) + "\n")
 
 
 def months_to_fetch(date: str, have: dict, max_months: int) -> list:
@@ -94,27 +48,6 @@ def months_to_fetch(date: str, have: dict, max_months: int) -> list:
         if last_have >= month_end.strftime("%Y%m%d"):
             break  # 快取已經涵蓋這個月（之前的月份更早，也都有）
         out.append(cur.strftime("%Y%m"))
-    return out
-
-
-def num(s) -> float:
-    s = str(s).replace(",", "").strip()
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
-
-
-def tables_of(data: dict) -> list:
-    """新版回傳 tables:[{fields,data}]；舊版是 fields/data 或 fields1/data1…，統一成 list"""
-    if isinstance(data.get("tables"), list):
-        return data["tables"]
-    out = []
-    if "fields" in data:
-        out.append({"fields": data["fields"], "data": data.get("data", [])})
-    for i in range(1, 20):
-        if f"fields{i}" in data:
-            out.append({"fields": data[f"fields{i}"], "data": data.get(f"data{i}", [])})
     return out
 
 
@@ -967,38 +900,6 @@ def mark_sent(date: str):
     if date not in sent_dates():
         with open(SENT_FILE, "a", encoding="utf-8") as f:
             f.write(date + "\n")
-
-
-TG_LIMIT = 4096  # Telegram 單則訊息上限（字元）
-
-
-def split_message(text: str, limit: int = TG_LIMIT) -> list:
-    """超過上限時依行切成多則（不切斷一行；單行就超過才硬切）"""
-    parts, cur = [], ""
-    for line in text.split("\n"):
-        while len(line) > limit:
-            if cur:
-                parts.append(cur)
-                cur = ""
-            parts.append(line[:limit])
-            line = line[limit:]
-        if cur and len(cur) + 1 + len(line) > limit:
-            parts.append(cur)
-            cur = line
-        else:
-            cur = f"{cur}\n{line}" if cur else line
-    if cur:
-        parts.append(cur)
-    return parts or [""]
-
-
-def send(text: str):
-    token, chat = os.environ["TG_BOT_TOKEN"], os.environ["TG_CHAT_ID"]
-    for part in split_message(text):
-        body = urllib.parse.urlencode({"chat_id": chat, "text": part}).encode()
-        req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body)
-        with urlopen_retry(req) as res:
-            res.read()
 
 
 def close_lines(date: str, retry: bool):

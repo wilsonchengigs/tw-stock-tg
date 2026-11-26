@@ -9,6 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import report  # noqa: E402
+import tgio  # noqa: E402
 
 
 def weekdays(start: date, n: int) -> list:
@@ -28,22 +29,22 @@ def closes_from(prices: list) -> list:
 
 class SplitMessage(unittest.TestCase):
     def test_short_unchanged(self):
-        self.assertEqual(report.split_message("a\nb"), ["a\nb"])
+        self.assertEqual(tgio.split_message("a\nb"), ["a\nb"])
 
     def test_splits_on_lines_within_limit(self):
         text = "\n".join(["x" * 30] * 10)
-        parts = report.split_message(text, limit=100)
+        parts = tgio.split_message(text, limit=100)
         self.assertTrue(all(len(p) <= 100 for p in parts))
         self.assertEqual("\n".join(parts), text)
 
     def test_long_single_line_hard_cut(self):
-        parts = report.split_message("y" * 250, limit=100)
+        parts = tgio.split_message("y" * 250, limit=100)
         self.assertEqual([len(p) for p in parts], [100, 100, 50])
 
 
 class LoadCsv(unittest.TestCase):
     def test_roundtrip_and_quoted_comma(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(report, "DATA_DIR", tmp):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(tgio, "DATA_DIR", tmp):
             report.save_csv("t.csv", "date,a,b", {"20240102": [1, 2], "20240101": [3, 4]})
             self.assertEqual(report.load_csv("t.csv"), {"20240101": ["3", "4"], "20240102": ["1", "2"]})
             with open(os.path.join(tmp, "q.csv"), "w", encoding="utf-8") as f:
@@ -51,13 +52,13 @@ class LoadCsv(unittest.TestCase):
             self.assertEqual(report.load_csv("q.csv"), {"20240103": ["a,b"]})
 
     def test_missing_file(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(report, "DATA_DIR", tmp):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(tgio, "DATA_DIR", tmp):
             self.assertEqual(report.load_csv("none.csv"), {})
 
 
 class UrlopenRetry(unittest.TestCase):
     def setUp(self):
-        p = mock.patch.object(report.time, "sleep")
+        p = mock.patch.object(tgio.time, "sleep")
         p.start()
         self.addCleanup(p.stop)
 

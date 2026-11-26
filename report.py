@@ -1033,7 +1033,11 @@ def main():
         return
     md = f"{int(date[4:6])}/{int(date[6:])}"
 
-    if part == "alert":  # 收盤後提醒：沒觸發就不送
+    if part == "alert":  # 收盤後提醒：沒觸發就不送；15:10 備援排程（研究 253），已送過不重送（data/alert_sent.csv）
+        sent_file = os.path.join(DATA_DIR, "alert_sent.csv")
+        if scheduled and os.path.exists(sent_file) and date in open(sent_file, encoding="utf-8").read().split():
+            print(f"{date} 收盤後提醒已送過，不重送")
+            return
         lines = alert_lines(date, retry)
         try:  # 研究 247：台美背離加碼（D）14:40 就能判斷（加權收盤＋前一晚 S&P），讓使用者可選 15:00 夜盤進（研究 220：與隔天開盤差不多）
             dl = [x for x in divergence_lines(date, taiex_daily(date)) if x]
@@ -1046,6 +1050,9 @@ def main():
             text = "\n".join([f"🚨 {md} 收盤後提醒（有訊號觸發）"] + lines)
             print(text)
             send(text)
+            if scheduled:
+                with open(sent_file, "a", encoding="utf-8") as f:
+                    f.write(date + "\n")
         else:
             print(f"{date} 沒有爆量收黑／台美背離觸發，不送")
         return

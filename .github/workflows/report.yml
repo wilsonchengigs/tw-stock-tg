@@ -10,6 +10,8 @@ on:
     - cron: '40 16 * * 1-5'
     # 台灣 14:40 收盤後提醒（REPORT_PART=alert）：只有「爆量收黑」觸發才送，讓台指期能趕 15:00 夜盤開盤
     - cron: '40 6 * * 1-5'
+    # 15:10 備援（11/26 的 14:40 排程沒觸發；研究 253）：已送過不重送（data/alert_sent.csv）
+    - cron: '10 7 * * 1-5'
     # 台灣 07:20 早上提醒（REPORT_PART=morning，研究 142～145）：夜盤或 S&P 前一晚跌 ≥2% 才送，趕 08:45 開盤；
     # 07:45、08:10 備援（GitHub 排程常延遲），已送過不重送（data/morning_sent.csv）。UTC 週日～週四＝台灣週一～週五早上
     - cron: '20 23 * * 0-4'
@@ -44,7 +46,7 @@ jobs:
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          REPORT_PART: ${{ inputs.part || (github.event.schedule == '40 6 * * 1-5' && 'alert') || (contains(fromJSON('["20 23 * * 0-4", "45 23 * * 0-4", "10 0 * * 1-5"]'), github.event.schedule) && 'morning') || 'all' }}
+          REPORT_PART: ${{ inputs.part || (contains(fromJSON('["40 6 * * 1-5", "10 7 * * 1-5"]'), github.event.schedule) && 'alert') || (contains(fromJSON('["20 23 * * 0-4", "45 23 * * 0-4", "10 0 * * 1-5"]'), github.event.schedule) && 'morning') || 'all' }}
           REPORT_DATE: ${{ inputs.date }}
           EVENT_SCHEDULE: ${{ github.event.schedule }}
 

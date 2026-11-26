@@ -87,6 +87,18 @@ def main():
         mdd = (e / np.maximum.accumulate(e) - 1).min()
         short = np.array([e_["need"] for e_ in eps if e_["in"]])
         L.append(f"  c {cc:4.0%}（主策略 {2 * (1 - cc):.1f}x）：{cg:6.1%}／{mdd:6.1%}；在場時期貨持有段中現金不足的段數 {int((short > cc).sum())}／{len(short)}")
+    # (2b) 00631L 100%、不留現金：只做主策略空手時的期貨（P、D；V、F 只在在場時所以不做）
+    L.append("\n【216b：00631L 100% 不留現金，只做主策略空手時觸發的 P／D】")
+    p_out = np.where(~main_in, p_add, 0.0)
+    d_out = np.where(~main_in, d_add[1:], 0.0)
+    for lab, extra in (("只有主策略（不加碼）", 0.0), ("＋空手時 P", p_out), ("＋空手時 P＋D", p_out + d_out),
+                       ("在場時預留 15% 做 V＋F＋P＋D（對照）", None)):
+        if extra is None:
+            r = np.where(main_in, 0.85 * main_r + 0.15 * rc, main_r) + fut_r
+        else:
+            r = main_r + extra
+        e = np.cumprod(1 + r)
+        L.append(f"  {lab}：{e[-1] ** (B.bt.TD / len(r)) - 1:6.1%}／{(e / np.maximum.accumulate(e) - 1).min():6.1%}")
     L.append("\n【替代：主策略用台指期 2x（研究 192 成本打平）】全部資金在期貨帳戶：最高名目 "
              f"{(units + base_u).max():.1f}x → 原始保證金約 {IM * (units + base_u).max():.0%}，其餘現金可吸收損益；"
              "缺點是一口大台 763 萬，資金小於約 400 萬時 2x 要用小台（190 萬）／微台（38 萬）湊")

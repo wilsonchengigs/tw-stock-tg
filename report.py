@@ -267,6 +267,37 @@ def is_hot(v) -> bool:
     return v is not None and (v[0] > HEAT_TH or v[1] > HEAT_Z)
 
 
+# ── 證交所休市日（研究 270：2026-12-25 週五休市，週訊號要在週四判斷；年底加碼的交易日也要扣休市）──────
+_HOLIDAYS = {}
+
+
+def twse_holidays(year: int) -> set:
+    """證交所公告的休市日 {YYYYMMDD}（含「僅辦理結算交割」；不含「開始交易日／最後交易日」）；抓不到就只扣 1/1"""
+    if year not in _HOLIDAYS:
+        try:
+            j = get_json(f"https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?response=json&date={year}0101")
+            _HOLIDAYS[year] = {r[0].replace("-", "") for r in j.get("data", [])
+                               if r[0][:4] == str(year) and "開始交易" not in r[1] and "最後交易" not in r[1]}
+        except Exception as e:  # noqa: BLE001
+            print(f"休市日抓取失敗：{e}", file=sys.stderr)
+            _HOLIDAYS[year] = set()
+        _HOLIDAYS[year].add(f"{year}0101")
+    return _HOLIDAYS[year]
+
+
+def is_trading_day(d) -> bool:
+    return d.weekday() < 5 and d.strftime("%Y%m%d") not in twse_holidays(d.year)
+
+
+def is_week_end(date: str) -> bool:
+    """date（YYYYMMDD）是否為本週最後一個交易日"""
+    d = datetime.strptime(date, "%Y%m%d").date()
+    nxt = d + timedelta(days=1)
+    while not is_trading_day(nxt):
+        nxt += timedelta(days=1)
+    return nxt.isocalendar()[:2] != d.isocalendar()[:2]
+
+
 def strategy_state(closes: list, heat: dict = None):
     """依每週最後一個交易日的收盤跑一遍，回傳 (目前狀態, 上次切換日, 今天的出場均線, 今天的進場均線)
     heat：融資過熱偏離（heat_series）；過熱時出場且不進場"""
@@ -290,8 +321,8 @@ def strategy_state(closes: list, heat: dict = None):
             continue
         if not last_of_week:
             continue
-        if i == len(closes) - 1 and datetime.strptime(d, "%Y%m%d").weekday() != 4:
-            continue  # 今天不是週五：這週還沒結束，價格規則不判斷
+        if i == len(closes) - 1 and not is_week_end(d):
+            continue  # 今天不是本週最後交易日（通常週五；週五休市則週四，研究 270）：價格規則不判斷
         above_exit = px >= ma_x * (1 - STRATEGY_EXIT_BAND)
         if not state:
             if heat_out and not above_exit:
@@ -316,7 +347,7 @@ def strategy_lines(date: str) -> list:
     state, switched, ma_x, ma_n = strategy_state(closes, heat)
     px = closes[-1][1]
     up, dn = ma_n * (1 + STRATEGY_ENTRY_BAND), ma_x * (1 - STRATEGY_EXIT_BAND)
-    is_friday = datetime.strptime(date, "%Y%m%d").weekday() == 4
+    is_friday = is_week_end(date)  # 本週最後交易日（週五休市時是週四，研究 270）
     # 2026-11-26 使用者要求：日報只講觸發了哪條規則、建議什麼操作；沒觸發的規則不逐條列
     lines = [""]
     hold = STRATEGY_ON if state else STRATEGY_OFF
@@ -424,14 +455,14 @@ def divergence_lines(date: str, closes: list) -> list:
 # 12 月最後交易日前 3 個交易日收盤進 0.5 倍台指期，1 月第 5 個交易日收盤出；不分主策略狀態、不設停損。
 # 1998～2025 28 次：加權每筆 +2.1%、勝率 71%（家族 p 0.001）；台指期真實價 +2.2%、最差 -5.5%；2013 後較弱（約 +1.3%）。
 # 疊在現行（85% 00631L＋V+F+P+D）上 2018-06～ 65.1%→66.4%、回檔與最差單日不變（研究 263）。
-# 交易日以「平日、扣掉 1/1」近似（證交所 12/31 照常開盤）；遇颱風等臨時休市會差一天，影響很小
+# 交易日用證交所休市日曆（研究 270；2026-12-25 休市、2027-12-24／12-31 休市）；颱風等臨時休市會差一天，影響很小
 YE_ADD, YE_PRE, YE_POST = 0.5, 3, 5
 
 
 def _tdays(start, end):
     d, out = start, []
     while d <= end:
-        if d.weekday() < 5 and not (d.month == 1 and d.day == 1):
+        if is_trading_day(d):
             out.append(d)
         d += timedelta(days=1)
     return out

@@ -4,6 +4,7 @@
   P 恐慌隔天做多（研究 145、170）：最近 N＝20 筆
   V 爆量收黑加碼（研究 172b，v3 在場、抱 10 天）：最近 N＝8 筆
   F 外資期貨加碼（研究 128／172，v3 在場、抱 5 天，2018-06～）：最近 N＝10 筆
+  D 台美背離加碼（研究 204～211，加權 20 日 − S&P 20 日 ≤-10% → 隔天開盤進、抱 5 天，不分 v3 狀態）：最近 N＝8 筆
 每條：全部筆數／勝率／每筆；最近 N 筆的平均，在「歷史上所有連續 N 筆平均」的分位
   < 10 分位 → ⚠️ 近期偏弱（不代表失效，但要留意）；< 3 分位 → 🚨 明顯偏弱，考慮暫停或降倍數
 資料：tx_daily_ohlc.csv、turnover_daily.csv、tx_inst_oi.csv、GSPC.json、margin_tw.csv（workflow 會先更新）
@@ -83,6 +84,20 @@ def main():
         rs = [R175.trade(day, night, ds, j, m, hl, None) for j, m, hl in ev]
         out += check(nm, [ds[j] for j, _, _ in ev], rs, N)
         out.append("")
+    R205 = load("r205", "research_205_台美背離台指期部位.py")
+    g = np.array([R205.GAP.get(d, np.nan) for d in ds])
+    ev, k = [], 0
+    while k < n - 2:
+        if g[k] <= -0.10:
+            j = k + 1
+            last = min(j + 4, n - 1)
+            ev.append((j, near[ds[k]], (last, "close")))
+            k = last + 1
+        else:
+            k += 1
+    rs = [R175.trade(day, night, ds, j, m, hl, None) for j, m, hl in ev]
+    out += check("台美背離加碼（0.5 倍、抱 5 天）", [ds[j] for j, _, _ in ev], rs, 8)
+    out.append("")
     out.append("（分位＝最近 N 筆平均在歷史上所有連續 N 筆平均中的位置；< 10% 才需要留意。樣本少的規則波動本來就大）")
     txt = "\n".join(out)
     print(txt)

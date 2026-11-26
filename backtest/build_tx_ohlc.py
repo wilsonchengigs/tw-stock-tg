@@ -10,11 +10,14 @@ import time
 import urllib.parse
 import urllib.request
 
+from refresh_util import drop_recent, this_month
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "tx_daily_ohlc.csv")
 
 
 def main():
+    drop_recent(OUT)  # 最近 2 個月每次重抓
     done = set()
     if os.path.exists(OUT):
         done = {r["date"][:7] for r in csv.DictReader(open(OUT, encoding="utf-8"))}
@@ -24,7 +27,7 @@ def main():
     if new:
         w.writerow(["date", "session", "month", "open", "high", "low", "close", "volume", "settle", "oi"])
     y, m = 1998, 7
-    while (y, m) <= (2026, 11):
+    while (y, m) <= this_month():
         key = f"{y}-{m:02d}"
         if key not in done:
             last = calendar.monthrange(y, m)[1]

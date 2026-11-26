@@ -1,0 +1,44 @@
+name: 每月規則健康檢查
+# 每月 1 日台灣 09:30 更新回測資料、跑研究 164（恐慌做多／爆量收黑／外資期貨 最近 N 筆在歷史上的分位），結果寄 TG
+# GitHub 排程可能延遲，延遲幾小時不影響；也可手動 workflow_dispatch
+on:
+  schedule:
+    - cron: '30 1 1 * *'
+  workflow_dispatch:
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install numpy
+      - name: 更新資料
+        run: |
+          curl -sfL -o backtest/margin_tw.csv https://raw.githubusercontent.com/salmonmisosoup/leverage-dashboard/HEAD/data/margin_tw.csv
+          curl -sfL -A "Mozilla/5.0" -o backtest/GSPC.json.raw "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?period1=0&period2=9999999999&interval=1d"
+          python -c "import json; d=json.load(open('backtest/GSPC.json.raw')); json.dump(d['chart']['result'][0], open('backtest/GSPC.json','w'))"
+          python -X utf8 backtest/build_tx_ohlc.py
+          python -X utf8 backtest/build_turnover.py
+          python -X utf8 backtest/build_tx_inst_oi.py
+      - name: 健康檢查並寄 TG
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python -X utf8 backtest/research_164_上線規則健康檢查.py
+          python -X utf8 -c "import report; report.send(open('backtest/結果_研究164_上線規則健康檢查.txt', encoding='utf-8').read())"
+      - name: 存回資料
+        if: ${{ !cancelled() }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backtest/tx_daily_ohlc.csv backtest/turnover_daily.csv backtest/tx_inst_oi.csv
+          git diff --cached --quiet && exit 0
+          git commit -m "每月健康檢查：回測資料更新"
+          for i in 1 2 3; do git pull --rebase && git push && exit 0; sleep 10; done
+          exit 1

@@ -1,0 +1,19 @@
+name: 日報回歸檢查
+# 研究 430：report.py／tgio.py／check_report.py 有改動時，用 6 個已知日期跑早上／收盤後／晚上日報（不送 Telegram），改壞了這裡會紅
+on:
+  push:
+    paths: ['report.py', 'tgio.py', 'check_report.py']
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -X utf8 check_report.py
+        env:
+          TG_BOT_TOKEN: dummy
+          TG_CHAT_ID: dummy

@@ -64,4 +64,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/*.csv backtest/tx_1min.csv backtest/tx_ticks backtest/stock_closes backtest/exright.csv
-          git diff --cached --quiet || (git commit -m "資料快取更新" && git push)
+          git diff --cached --quiet && exit 0
+          git commit -m "資料快取更新"
+          # 研究同時在推送，直接 push 會被拒（2026-11-27 21:30 那次失敗）：先 rebase 再推，重試 5 次
+          for i in 1 2 3 4 5; do git pull --rebase --autostash && git push && exit 0; sleep 15; done
+          exit 1

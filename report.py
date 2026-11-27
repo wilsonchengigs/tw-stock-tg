@@ -1300,6 +1300,9 @@ def main():
             + ([("台指期今天 8:45 開盤（補發時已過開盤就用市價）" if late else "台指期明早 8:45 開盤")] if fut_ else [])
             + (["台美背離加碼明天 13:45 收盤前平倉"] if any(a.startswith("📌") for a in acts) else []))
         head += ["", f"🚨 {md} 有訊號觸發："] + [f"・{a}" for a in acts] + [when]
+        if fut_ and any(ln.startswith("🧭 主策略應持有：85%") for ln in body):
+            # 研究 243／434／435：主策略在場時期貨帳戶只有 15% 現金，所有台指期加碼合計名目上限約 1.5 倍
+            head.append("💰 主策略在場：所有台指期加碼（含持有中的）合計不超過 1.5 倍名目（15% 現金的保證金上限）；超過時先不加獨立短線、再縮恐慌做多")
     note = holiday_note(date)  # 研究 272：明天休市時說明「明天／明早」指哪一天
     if note:
         head.insert(1, note)

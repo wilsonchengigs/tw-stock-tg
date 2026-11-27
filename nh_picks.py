@@ -1,9 +1,9 @@
 """52 週高點選股清單（研究 301～303；2026-11-27 使用者要求每月附在日報）
 
-規則（同研究 302／303 回測）：每月第一個交易日收盤，上市 4 碼普通股（不含 00 開頭 ETF）、
-收盤 ≥10 元、有 250 個交易日以上歷史、12 個月前的月初有報價、近 12 個月（含本月）沒有還原後單日 >±11% 的跳動；
+規則（同研究 302～307 回測）：每月第一個交易日收盤，上市 4 碼普通股（不含 00 開頭 ETF、不含創新板）、
+收盤 ≥10 元、當天成交金額 ≥1,000 萬（研究 307）、有 250 個交易日以上歷史、12 個月前的月初有報價、近 12 個月（含本月）沒有還原後單日 >±11% 的跳動；
 依「還原除權息收盤 ÷ 過去 250 個交易日最高還原收盤」由大到小，取前 10%（約 80～90 檔）等權，抱到下個月第一個交易日換股。
-回測 2014～2026-10（含息、扣成本、無前視，研究 304）：前 10% 年化 +19.4%、最大回檔 -14.9%、Sharpe 1.34；前 30 檔 +24.1%／-17.2%／1.25。
+回測 2014～2026-10（含息、扣成本、無前視、≥1,000 萬，研究 307）：前 30 檔 +23.5%／-25.3%／Sharpe 1.16；前 10% +21.9%／-17.9%／1.22。
 
 資料：
 - `backtest/stock_closes/YYYY.csv.gz`：每日收盤（日報每天補抓缺的日子，一天一次證交所 MI_INDEX 請求）
@@ -27,7 +27,7 @@ EXR = os.path.join(ROOT, "backtest", "exright.csv")
 LIST = os.path.join(ROOT, "data", "nh_list.csv")
 NAMES = os.path.join(SC, "_names.json")
 UA = {"User-Agent": "Mozilla/5.0"}
-TOP_Q, LOOK, MIN_PX, JUMP = 0.10, 250, 10.0, 0.11
+TOP_Q, LOOK, MIN_PX, JUMP, MIN_AMT = 0.10, 250, 10.0, 0.11, 1e7  # 研究 307：選股日成交金額 ≥1,000 萬
 
 
 def _get(url):
@@ -125,7 +125,25 @@ def update_exright(year):
         w.writerows(sorted(allr.values()))
 
 
-def pick(date_iso):
+def amounts(date_iso):
+    """選股日的成交金額（元）與股名；一次 MI_INDEX 請求"""
+    js = _get(f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={date_iso.replace('-', '')}&type=ALLBUT0999&response=json")
+    amt, nm = {}, {}
+    for t in js.get("tables", []):
+        fl = t.get("fields") or []
+        if "證券代號" in fl and "成交金額" in fl:
+            ic, ia, inm = fl.index("證券代號"), fl.index("成交金額"), fl.index("證券名稱")
+            for r in t.get("data", []):
+                c = str(r[ic]).strip()
+                nm[c] = str(r[inm]).strip()
+                try:
+                    amt[c] = float(str(r[ia]).replace(",", ""))
+                except ValueError:
+                    pass
+    return amt, nm
+
+
+def pick(date_iso, amt=None, nm=None):
     """date_iso＝當月第一個交易日；回傳 [(code, ratio)] 由大到小（前 TOP_Q）與候選數"""
     y = int(date_iso[:4])
     rows = _read_year(y - 2) + _read_year(y - 1) + _read_year(y)
@@ -148,6 +166,10 @@ def pick(date_iso):
     for c, m in px.items():
         if date_iso not in m or m12 not in m or m[date_iso] < MIN_PX:
             continue
+        if amt is not None and amt.get(c, 0.0) < MIN_AMT:
+            continue  # 研究 307：流動性門檻
+        if nm is not None and "-創" in nm.get(c, ""):
+            continue  # 創新板：一般投資人須具資格
         ds = sorted(m)
         if len(ds) <= LOOK:
             continue
@@ -185,13 +207,16 @@ def lines(date_iso, trading_days):
     """日報段落（每月第一個交易日）；trading_days＝近 ~40 個交易日，用來補抓缺的收盤"""
     update_closes(trading_days)
     update_exright(int(date_iso[:4]))
-    top, n = pick(date_iso)
+    amt, nm = amounts(date_iso)
+    top, n = pick(date_iso, amt, nm)
     names = json.load(open(NAMES, encoding="utf-8")) if os.path.exists(NAMES) else {}
+    names.update(nm)
     pdate, prev = save_list(date_iso, top, names)
     cur = {c for c, _ in top}
     nm = lambda c: f"{names.get(c, '')}{c}"  # noqa: E731
-    out = ["", f"🗂️ 52 週高點選股（每月第一個交易日換股，研究 301～303；參考清單、不在主策略內）：候選 {n} 檔取前 10% 共 {len(top)} 檔，等權持有到下個月第一個交易日",
-           "　回測 2014～2026-10 含息扣成本（研究 304，無前視）：前 10% 年化 +19.4%、最大回檔 -14.9%；只買前 30 檔 +24.1%／-17.2%（0050 +21.7%／-29.2%）｜每月換比每季換好｜單一時期、回測可能偏樂觀",
+    out = ["", f"🗂️ 52 週高點選股（每月第一個交易日換股，研究 301～307；參考清單、不在主策略內）：候選 {n} 檔取前 10% 共 {len(top)} 檔，等權持有到下個月第一個交易日",
+           "　篩選：收盤 ≥10 元、選股日成交金額 ≥1,000 萬、不含創新板（研究 307）",
+           "　回測 2014～2026-10 含息扣成本（研究 307，同樣篩選）：前 30 檔年化 +23.5%、最大回檔 -25.3%；前 10% +21.9%／-17.9%（0050 +20.7%／-29.2%）｜每月換（研究 304）｜勝過隨機選股（研究 306）｜單一時期、回測可能偏樂觀",
            "　精簡版前 30 檔：" + "、".join(f"{names.get(c, '')}{c}" for c, _ in top[:30])]
     if prev:
         add = [c for c, _ in top if c not in prev]

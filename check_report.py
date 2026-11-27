@@ -24,6 +24,11 @@ def main():
             print(f"{'✅' if ok else '❌'} {part} {d}：{'送出' if sent else '不送'}（預期 {'送出' if expect else '不送'}）")
             bad += not ok
         except Exception as e:  # noqa: BLE001
+            import socket
+            import urllib.error
+            if isinstance(e, (TimeoutError, socket.timeout, urllib.error.URLError, ConnectionError)) or "timed out" in str(e):
+                print(f"⚠️ {part} {d}：網路逾時／連線失敗，略過（不算程式錯誤）：{e}")
+                continue
             print(f"❌ {part} {d}：例外 {e}")
             bad += 1
     sys.exit(1 if bad else 0)

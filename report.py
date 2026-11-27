@@ -16,6 +16,7 @@
 環境變數：TG_BOT_TOKEN、TG_CHAT_ID；REPORT_PART；REPORT_DATE（選填，YYYYMMDD，測試用）
 只用 Python 標準函式庫。
 """
+import math
 import json
 import os
 import re
@@ -836,6 +837,18 @@ def _safe_vix(date: str):
         return vix_note(date)
     except Exception as e:  # noqa: BLE001
         print(f"VIX 讀取失敗：{e}", file=sys.stderr)
+    try:  # 備援（研究 458）：加權 20 日實現波動，與 VIX 相關 0.85、同樣分得出 P 強弱；23%／36% 對應 VIX 25／35
+        p = [c for d, c in taiex_daily(date) if d < date][-21:]
+        if len(p) < 21:
+            return None
+        rs = [math.log(b / a) for a, b in zip(p, p[1:])]
+        mu = sum(rs) / len(rs)
+        rv = (sum((x - mu) ** 2 for x in rs) / len(rs)) ** 0.5 * 252 ** 0.5
+        tip = ("偏低：研究 444 這區效率最低，保守者可只做 0.5 倍" if rv < 0.23 else
+               "偏高：研究 444 這區效率約 3 倍，進取者可做到 1.5 倍" if rv >= 0.36 else "中等：照常 1 倍")
+        return f"📈 台指 VIX 抓不到，改看加權 20 日實現波動 {rv:.0%}｜{tip}（研究 458 參考，未納入規則）"
+    except Exception as e:  # noqa: BLE001
+        print(f"實現波動計算失敗：{e}", file=sys.stderr)
         return None
 
 

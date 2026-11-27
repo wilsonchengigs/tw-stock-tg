@@ -89,11 +89,16 @@ def p_by_vol(recent_years=2):
     v, r, d = S.v_, S.r_, S.d_
     cut = (date.fromisoformat(d[-1]) - timedelta(days=365 * recent_years)).isoformat()
     out = []
-    for lab, g in (("平靜（C2：在場 1x／空手 0x）", v < 0.23), ("中等 1x", (v >= 0.23) & (v < 0.36)), ("恐慌 1.5x", v >= 0.36)):
+    with contextlib.redirect_stdout(io.StringIO()):
+        V = load("r411_h", "research_411_實際配置含V.py")
+    st = {dd: int(V.st[k]) for k, dd in enumerate(V.ds)}
+    on = np.array([st.get(S.dates[S.pos[dd] - 1], -1) for dd in d])
+    for lab, g in (("平靜＋主策略在場 1x（C2）", (v < 0.23) & (on == 1)), ("平靜＋主策略空手 不做（C2）", (v < 0.23) & (on == 0)),
+                   ("中等 1x", (v >= 0.23) & (v < 0.36)), ("恐慌 1.5x", v >= 0.36)):
         rec = g & (d >= cut)
         tail = f"近 {recent_years} 年 {rec.sum()} 筆 {r[rec].mean():+.2%}" if rec.sum() else f"近 {recent_years} 年 0 筆"
         out.append(f"{lab}：全期 {g.sum()} 筆 每筆 {r[g].mean():+.2%}｜{tail}")
-    return ["📊 恐慌做多依波動分級（研究 444～466，C 版）："] + ["　" + x for x in out]
+    return ["📊 恐慌做多依波動分級（研究 444～498，C2 版）："] + ["　" + x for x in out]
 
 
 def _safe(fn):

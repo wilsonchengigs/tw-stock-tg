@@ -727,7 +727,7 @@ def _overlay_core(date: str, closes: list, heat: dict) -> list:
             if r >= OVERLAY_K and dn and not short_skip([c for c in closes if c[0] <= days[j]], heat, days[j]):
                 held = n - 1 - j
                 entry = cdict[days[j]]
-                lines.append(f"🎯 獨立短線持有中：{int(days[j][4:6])}/{int(days[j][6:])} 的爆量收黑，已過 {held}/{SHORT_HOLD} 個交易日"
+                lines.append(f"👀 獨立短線持有中：{int(days[j][4:6])}/{int(days[j][6:])} 的爆量收黑，已過 {held}/{SHORT_HOLD} 個交易日"
                              + ("，今天收盤平倉" if held >= SHORT_HOLD else f"；停損參考：指數跌破約 {entry * (1 - SHORT_STOP):,.0f}"))
                 break
     return lines if len(lines) > 2 else []  # 只有標題＝沒觸發、沒持有 → 不顯示

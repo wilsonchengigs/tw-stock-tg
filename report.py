@@ -364,6 +364,38 @@ def strategy_state(closes: list, heat: dict = None):
     return state, switched, ma_x, ma_n
 
 
+REBAL_LOW, REBAL_TARGET = 0.12, 0.15
+
+
+def rebalance_lines(date: str, closes: list, switched: str) -> list:
+    """研究 478／479（2026-11-27 使用者選甲）：主策略在場時 00631L 上漲會稀釋 15% 現金（期貨加碼的保證金）；
+    估計現金占比跌破 12% 就提醒賣一部分 00631L 補回 15%。00631L 以「每日 2 倍加權」近似，自進場（訊號後下一個交易日收盤買）起算，
+    假設每次跌破 12% 都有照做；期貨加碼損益不計。2002～ 不再平衡時最低到 4.8%（2025-05～2026-05）"""
+    ds = [d for d, _ in closes]
+    if switched not in ds:
+        return []
+    k0 = ds.index(switched) + 1
+    if k0 >= len(ds) - 1:
+        return []
+    a, c, last_rb = 1 - REBAL_TARGET, REBAL_TARGET, None
+    hit_today = False
+    for k in range(k0 + 1, len(ds)):
+        a *= 1 + 2 * (closes[k][1] / closes[k - 1][1] - 1)
+        if c / (a + c) < REBAL_LOW:
+            sell = (a / (a + c)) - (1 - REBAL_TARGET)
+            if ds[k] == date:
+                hit_today = True
+                break
+            a, c = (1 - REBAL_TARGET) * (a + c), REBAL_TARGET * (a + c)
+            last_rb = ds[k]
+    cf = c / (a + c)
+    if hit_today:
+        return [f"🔔 再平衡（研究 478，你選的甲）：估計現金只剩約 {cf:.1%}（< 12%）→ 明天收盤前賣出約總資產 {sell:.0%} 的 00631L，轉進期貨帳戶，回到 85%／15%",
+                "　原因：現金是期貨加碼的保證金，太少時恐慌做多、爆量收黑會放不下；實際比例以你的帳戶為準"]
+    rb = f"，上次估計該再平衡 {int(last_rb[4:6])}/{int(last_rb[6:])}" if last_rb else ""
+    return [f"　💵 現金占比估計約 {cf:.0%}（跌破 12% 時提醒再平衡{rb}；以 00631L≈2 倍加權估算，實際以帳戶為準）"]
+
+
 def strategy_lines(date: str) -> list:
     closes = taiex_daily(date)
     if len(closes) < max(STRATEGY_EXIT_MA, STRATEGY_ENTRY_MA) + 5 or closes[-1][0] != date:
@@ -393,6 +425,11 @@ def strategy_lines(date: str) -> list:
         action = f"買進 → {STRATEGY_ON}" if state else f"全部賣出 → {STRATEGY_OFF}"
         lines.append(f"⚠️ 本週訊號切換：下一個交易日收盤 {action}")
         lines.append("　部位：資金 85% 買 00631L（約 1.7 倍曝險）、15% 現金轉進期貨帳戶當加碼保證金（研究 216：在場時期貨加碼最多要約 20% 保證金，15% 時 77 段只有 1 段不夠）｜歷史（1997～，54 次）勝率 52%、期望值每次 +19.1%（中位 +0.3%）、平均賺 +43.6%／平均賠 -7.3%、平均抱約 53 個交易日——小賠多次、大賺少次｜退場（＝主策略的停損）：週五收盤跌破出場線（MA80 × 0.975），或融資過熱（每天檢查）就全部賣出" if state else "　部位：00631L 全部賣出、轉現金｜歷史（1997～，55 段空手期）指數平均 -2.6%、2 倍部位等於避開約 -4.0%；約一半的空手期指數其實是漲的（假訊號），靠避開大跌取勝")
+    if state and switched:
+        try:
+            lines += rebalance_lines(date, closes, switched)
+        except Exception as e:  # noqa: BLE001
+            print(f"再平衡估算失敗：{e}", file=sys.stderr)
     try:
         lines += overlay_lines(date, closes, heat)
     except Exception as e:  # 加碼段落失敗不影響策略段落

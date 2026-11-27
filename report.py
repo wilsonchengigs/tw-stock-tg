@@ -784,7 +784,7 @@ def alert_lines(date: str, retry: bool) -> list:
 # 夜盤（前一天 15:00→今天 05:00）近月 開→收 跌 ≥2%，或 S&P500 前一個美國交易日跌 ≥2%
 # → 今天 08:45 開盤加 1 倍台指期，抱到下一個交易日 08:45 開盤出；5% 災難停損（研究 175，2026-11-26 使用者要求每個進場都有停損）、不分主策略狀態
 # 2026-11-26 使用者同意由 0.5 倍提高到 1 倍（研究 170：組合內 1x 回檔不加深、約 1/7 凱利；1.5x 起回檔加深）
-PANIC_TH, PANIC_ADD = 0.02, 1.0
+PANIC_TH, PANIC_ADD = 0.02, 1.0  # 基準倍數；實際依前一天波動 ×0.5／1／1.5（panic_size，2026-11-27 使用者選研究 444 C 版）
 MORNING_SENT_FILE = os.path.join(DATA_DIR, "morning_sent.csv")
 
 
@@ -832,28 +832,9 @@ def sp500_last(date: str):
     return rows[-1][0], chg
 
 
-def _safe_vix(date: str):
-    try:
-        return vix_note(date)
-    except Exception as e:  # noqa: BLE001
-        print(f"VIX 讀取失敗：{e}", file=sys.stderr)
-    try:  # 備援（研究 458）：加權 20 日實現波動，與 VIX 相關 0.85、同樣分得出 P 強弱；23%／36% 對應 VIX 25／35
-        p = [c for d, c in taiex_daily(date) if d < date][-21:]
-        if len(p) < 21:
-            return None
-        rs = [math.log(b / a) for a, b in zip(p, p[1:])]
-        mu = sum(rs) / len(rs)
-        rv = (sum((x - mu) ** 2 for x in rs) / len(rs)) ** 0.5 * 252 ** 0.5
-        tip = ("偏低：研究 444 這區效率最低，保守者可只做 0.5 倍" if rv < 0.23 else
-               "偏高：研究 444 這區效率約 3 倍，進取者可做到 1.5 倍" if rv >= 0.36 else "中等：照常 1 倍")
-        return f"📈 台指 VIX 抓不到，改看加權 20 日實現波動 {rv:.0%}｜{tip}（研究 458 參考，未納入規則）"
-    except Exception as e:  # noqa: BLE001
-        print(f"實現波動計算失敗：{e}", file=sys.stderr)
-        return None
-
-
-def vix_note(date: str):
-    """研究 444／445（參考、未納入規則）：前一天台指 VIX 與 P 倍數參考；資料來自 salmonmisosoup/leverage-dashboard 的 vixtwn.csv"""
+def vix_level(date: str):
+    """前一天台指 VIX（近 3 日中位數：來源偶有單日錯價，2026-11-24 26.18、前後 55～58）；抓不到回 None
+    資料來自公開倉庫 salmonmisosoup/leverage-dashboard 的 vixtwn.csv（研究 444）"""
     url = "https://raw.githubusercontent.com/salmonmisosoup/leverage-dashboard/HEAD/data/vixtwn.csv"
     with urlopen_retry(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})) as res:
         rows = [ln.split(",") for ln in res.read().decode("utf-8").splitlines()[1:] if ln.strip()]
@@ -861,12 +842,49 @@ def vix_note(date: str):
     prev = [(d, float(v)) for d, v in rows if d < d0 and v]
     if not prev:
         return None
-    d = prev[-1][0]
-    v = sorted(x for _, x in prev[-3:])[len(prev[-3:]) // 2]  # 最近 3 天中位數：來源偶有單日錯價（2026-11-24 26.18，前後 55～58）
-    tip = ("VIX < 25：研究 444 歷史上這區每筆 +0.13%、效率最低，保守者可只做 0.5 倍，或當天 13:45 收盤就出（研究 453：這區隔夜段平均 -0.05%）" if v < 25 else
-           "VIX ≥ 35：研究 444 歷史上這區每筆約 +0.9～2.5%、效率約 3 倍，進取者可做到 1.5 倍" if v >= 35 else
-           "VIX 25～35：照常 1 倍")
-    return f"📈 台指 VIX（至 {d[5:7]}/{d[8:]}，近 3 日中位）{v:.1f}｜{tip}（研究 444／445 參考，未納入規則；倍數由你決定）"
+    last3 = sorted(x for _, x in prev[-3:])
+    return prev[-1][0], last3[len(last3) // 2]
+
+
+def rv20_level(date: str):
+    """備援（研究 458）：加權前 20 日實現波動（年化），與 VIX 相關 0.85；23%／36% 對應 VIX 25／35"""
+    p = [c for d, c in taiex_daily(date) if d < date][-21:]
+    if len(p) < 21:
+        return None
+    rs = [math.log(b / a) for a, b in zip(p, p[1:])]
+    mu = sum(rs) / len(rs)
+    return (sum((x - mu) ** 2 for x in rs) / len(rs)) ** 0.5 * 252 ** 0.5
+
+
+def panic_size(date: str):
+    """P 倍數依前一天波動（研究 444～466；2026-11-27 使用者選 C 版）：
+    VIX < 25 → 0.5 倍、25～35 → 1 倍、≥ 35 → 1.5 倍；VIX 抓不到改用加權 20 日實現波動 23%／36%；兩者都拿不到 → 1 倍
+    回測（研究 465，主策略 1.7x＋P＋D＋V，2002～）：年化 35.2% → 37.2%、回檔 -28.5% 不變；bootstrap 贏現行 99%（研究 466）
+    回傳 (倍數, 說明行)"""
+    try:
+        got = vix_level(date)
+    except Exception as e:  # noqa: BLE001
+        print(f"VIX 讀取失敗：{e}", file=sys.stderr)
+        got = None
+    if got:
+        d, v = got
+        lv = 0 if v < 25 else 2 if v >= 35 else 1
+        src = f"台指 VIX（至 {d[5:7]}/{d[8:]}，近 3 日中位）{v:.1f}"
+    else:
+        try:
+            rv = rv20_level(date)
+        except Exception as e:  # noqa: BLE001
+            print(f"實現波動計算失敗：{e}", file=sys.stderr)
+            rv = None
+        if rv is None:
+            return PANIC_ADD, "📈 波動資料抓不到：照 1 倍"
+        lv = 0 if rv < 0.23 else 2 if rv >= 0.36 else 1
+        src = f"台指 VIX 抓不到，改看加權 20 日實現波動 {rv:.0%}"
+    size = (0.5, 1.0, 1.5)[lv] * PANIC_ADD
+    why = ("市場原本平靜：這區歷史上 P 每筆約 0、隔夜段 -0.05%（研究 453、459）→ 只做 0.5 倍",
+           "中等波動：照常 1 倍",
+           "市場已在恐慌：這區歷史上 P 每筆約 +1.3%（研究 444、459）→ 做 1.5 倍")[lv]
+    return size, f"📈 {src}｜{why}"
 
 
 def holiday_panic_lines(date: str) -> list:
@@ -923,16 +941,18 @@ def morning_lines(date: str, retry: bool) -> list:
     kind = ("雙觸發（夜盤＋S&P）", 21, "81%", "+1.06%", "+1.93%", "-2.60%") if hit_n and hit_s else \
         ("只有夜盤觸發", 16, "56%", "+0.94%", "+3.00%", "-1.70%") if hit_n else \
         ("只有 S&P 觸發（較弱，研究 158）", 61, "64%", "+0.20%", "+1.13%", "-1.46%")
+    size, vline = panic_size(date)
+    lots = f"每 100 萬資金約微台 {size * 1e6 / (night[2] * 10):.1f} 口；" if night else ""
     lines += [
-        f"🎯 今天 08:45 開盤買台指期近月 {PANIC_ADD} 倍名目（不管主策略在不在場），抱到下一個交易日 08:45 開盤平倉；停損 5%（災難停損：只防極端，研究 175 期望值 +0.52%→+0.51%、302 筆約 9 筆觸發；更緊的 2～3% 會變差）",
-        *([vn] if (vn := _safe_vix(date)) else []),
+        f"🎯 今天 08:45 開盤買台指期近月 {size:g} 倍名目（{lots}依前一天波動 0.5／1／1.5 倍，研究 444～466），不管主策略在不在場，抱到下一個交易日 08:45 開盤平倉；停損 5%（災難停損：只防極端，研究 175 期望值 +0.52%→+0.51%、302 筆約 9 筆觸發；更緊的 2～3% 會變差）",
+        vline,
         f"📊 這次是「{kind[0]}」：2017-05～ {kind[1]} 筆，勝率 {kind[2]}、期望值每筆 {kind[3]}、平均賺 {kind[4]}／平均賠 {kind[5]}",
         "📈 歷史（每筆扣 3 點成本）：",
         "・2017-05～2026（有夜盤，夜盤或 S&P 跌 ≥2%）99 筆：勝率 66%、期望值每筆 +0.49%（約 +104 點／口）、"
         "平均賺 +1.60%／平均賠 -1.64%、最差 -9.3%",
         "・1998～2017（無夜盤，S&P 跌 ≥2% 代理，樣本外）215 筆：勝率 60%、期望值每筆 +0.50%",
         "・疊在現行策略上（2018-06～，加 1 倍）：年化 60.6% → 70.4%、最大回檔 -25.6% → -26.8%；家族檢定 p 0.002（研究 145、170）",
-        "⚠️ 好處集中在崩跌期，1 倍時單筆可能賠資金 5～9%（歷史最差 -9.3%、連 3 次最差 -12%）；照規則開盤進，不要盤中追價或再加碼",
+        "⚠️ 好處集中在崩跌期，1 倍時單筆可能賠資金 5～9%、1.5 倍時約 8～14%（歷史最差 -9.3%、連 3 次最差 -12%）；照規則開盤進，不要盤中追價或再加碼",
         # 2026-11-26 使用者要求加入：2017-05～ 98 筆，進場後到隔天開盤前最大逆向（日盤低／當晚夜盤低 vs 進場價）
         "💰 保證金：期貨帳戶建議放名目的 20%（例：名目 100 萬 → 放約 20 萬），不要只放原始保證金（11/26 期交所大台 70.1 萬／名目約 763 萬＝約 9%）",
         # 研究 243：使用者選 85% 00631L＋15% 現金（研究 216 (a)），期貨帳戶約撐 1.5 倍名目
@@ -1323,7 +1343,7 @@ def main():
             print(f"策略失敗：{e}", file=sys.stderr)
         try:  # 今天早上若有恐慌隔天做多（候選 6）部位，提醒明早開盤平倉
             if morning_lines(date, False):
-                body.append(f"🔔 恐慌隔天做多：今天 08:45 若有進 {PANIC_ADD} 倍台指期，明早 08:45 開盤平倉（研究 143：抱到隔天開盤）")
+                body.append(f"🔔 恐慌隔天做多：今天 08:45 若有進台指期，明早 08:45 開盤平倉（倍數依早上提醒：前一天波動 0.5／1／1.5 倍；研究 143：抱到隔天開盤）")
         except Exception as e:  # noqa: BLE001
             print(f"恐慌部位檢查失敗：{e}", file=sys.stderr)
     # 有要操作的訊號就放到最上面並附期限，免得被長報告淹沒

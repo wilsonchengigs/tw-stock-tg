@@ -676,8 +676,26 @@ def nsf_news_hint(t) -> list:
             hits.append(title.split(" - ")[0][:40])
     if not hits:
         return []
-    return ["", f"⚠️ 新聞疑似國安基金新宣布進場（{len(hits)} 則，例：「{hits[0]}」）→ 確認後把宣布日加進 report.py 的 NSF_EVENTS，"
+    return ["", f"📰 新聞疑似國安基金新宣布進場（{len(hits)} 則，例：「{hits[0]}」）→ 確認後把宣布日加進 report.py 的 NSF_EVENTS，"
                 "日報就會顯示研究 280 的 5 日參考（歷史 10 次全上漲、平均 +6.3%）"]
+
+
+# ── 52 週高點選股（研究 301～303；2026-11-27 使用者要求每月附清單，參考、不在主策略內）──────────────────
+# 每天補抓最近交易日的上市個股收盤（`backtest/stock_closes`，缺幾天抓幾天、一天一次請求）；
+# 每月第一個交易日依 nh_picks.py 規則出清單（前 10%，附新增／剔除），存 `data/nh_list.csv`
+
+
+def nh_report_lines(date: str) -> list:
+    import nh_picks
+    t = datetime.strptime(date, "%Y%m%d").date()
+    recent = [d.isoformat() for d in _tdays(t - timedelta(days=60), t)]
+    if not recent or recent[-1] != t.isoformat():
+        return []
+    prev = recent[-2] if len(recent) > 1 else None
+    if prev and prev[:7] == recent[-1][:7]:
+        nh_picks.update_closes(recent[-10:])  # 平常日：只補收盤
+        return []
+    return nh_picks.lines(t.isoformat(), recent)
 
 
 # ── 在場時爆量收黑加碼（研究 63～64g，2026-11-24 使用者同意加入）──────────────────
@@ -1458,6 +1476,10 @@ def main():
             body += strategy_lines(date)
         except Exception as e:  # 策略算不出來不影響其他資訊
             print(f"策略失敗：{e}", file=sys.stderr)
+        try:  # 52 週高點選股（研究 301～303，使用者 2026-11-27 要求每月附清單）：每天補抓個股收盤，月初出清單
+            body += nh_report_lines(date)
+        except Exception as e:  # noqa: BLE001
+            print(f"52 週高點選股失敗：{e}", file=sys.stderr)
         try:  # 今天早上若有恐慌隔天做多（候選 6）部位，提醒明早開盤平倉
             if morning_lines(date, False):
                 body.append(f"🔔 恐慌隔天做多：今天 08:45 若有進台指期，明早 08:45 開盤平倉（倍數依早上提醒：前一天波動 0.5／1／1.5 倍；研究 143：抱到隔天開盤）")

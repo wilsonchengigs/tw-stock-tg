@@ -434,6 +434,10 @@ def divergence_lines(date: str, closes: list) -> list:
     ny = timezone(timedelta(hours=-5))
     us = [(datetime.fromtimestamp(t, ny).strftime("%Y%m%d"), c)
           for t, c in zip(r["timestamp"], r["indicators"]["quote"][0]["close"]) if c]
+    # 研究 426：S&P 單日 >15% 視為 Yahoo 壞值，整段不判斷（避免假背離）
+    if any(abs(b / a - 1) > 0.15 for (_, a), (_, b) in zip(us, us[1:])):
+        print("台美背離：S&P 資料有單日 >15% 的異常值，今天不判斷", file=sys.stderr)
+        return []
 
     def us_before(d):
         prev = [c for k, c in us if k < d]
@@ -815,7 +819,11 @@ def sp500_last(date: str):
     rows = [x for x in rows if x[0] < date]
     if len(rows) < 2:
         return None
-    return rows[-1][0], rows[-1][1] / rows[-2][1] - 1
+    chg = rows[-1][1] / rows[-2][1] - 1
+    if abs(chg) > 0.15:  # 研究 425／426：Yahoo 偶有壞值（TWD=X 出現過 1.80），S&P 單日 >15% 視為資料錯誤，不觸發
+        print(f"S&P500 單日 {chg:+.1%} 異常（{rows[-2][1]} → {rows[-1][1]}），當作資料錯誤", file=sys.stderr)
+        return None
+    return rows[-1][0], chg
 
 
 def morning_lines(date: str, retry: bool) -> list:

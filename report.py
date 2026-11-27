@@ -1197,7 +1197,9 @@ def run_morning(date, scheduled, retry, now):
         return
     late = ("（⏰ 排程延遲，已過 08:45 開盤：照下面「錯過 08:45」的方式 15:00 夜盤補進）"
             if scheduled and now.hour * 60 + now.minute > 8 * 60 + 45 else "")
-    text = "\n".join([f"🌅 {int(mdate[4:6])}/{int(mdate[6:])} 早上提醒：恐慌隔天做多（候選 6）{late}"] + lines)
+    title = ("早上觀察：長假後美股累積下跌（研究 428，非正式訊號）" if lines and lines[0].startswith("👀")
+             else "早上提醒：恐慌隔天做多（候選 6）")
+    text = "\n".join([f"🌅 {int(mdate[4:6])}/{int(mdate[6:])} {title}{late}"] + lines)
     print(text)
     send(text)
     if scheduled:

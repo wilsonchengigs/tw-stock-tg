@@ -450,6 +450,10 @@ def strategy_lines(date: str) -> list:
         lines += lunar_lines(date)
     except Exception as e:  # noqa: BLE001
         print(f"春節加碼失敗：{e}", file=sys.stderr)
+    try:
+        lines += nsf_lines(date)
+    except Exception as e:  # noqa: BLE001
+        print(f"國安基金提醒失敗：{e}", file=sys.stderr)
     return lines
 
 
@@ -611,6 +615,40 @@ def lunar_lines(date: str) -> list:
         if rest == 1:
             return ["", f"📌 {head}：下個交易日（{md(close_)}，封關日）13:45 收盤前平倉，不要抱過年"]
         return ["", f"👀 {head}：持有中，還有 {rest} 個交易日"]
+    return []
+
+
+# ── 國安基金進場參考提醒（研究 280、291；2026-11-27 使用者同意加「參考提醒」，不改倉位）──────────────────
+# 國安基金宣布進場後第一個交易日開盤進台指期 → 第 5 個交易日收盤：2000～2026 10 次全上漲、平均 +6.3%；
+# 扣掉「急跌後本來就反彈」仍超額 +4.7%（p 0.003，研究 280～290 系列 BH q 0.035）；20 日以上不可靠（2000-10、2008 之後再跌 2 成以上）。
+# 沒有可靠的自動資料源：宣布時把（宣布日, 第一個反應交易日, 說明）加進 NSF_EVENTS 即可，日報在宣布日～第 5 個交易日顯示
+NSF_EVENTS = [
+    ("20261106", "20261109", "第 10 次，第 131 次臨時委員會授權"),
+]
+NSF_H = 5
+
+
+def nsf_lines(date: str) -> list:
+    t = datetime.strptime(date, "%Y%m%d").date()
+    md = lambda d: f"{d.month}/{d.day}"  # noqa: E731
+    for ann, first, note in NSF_EVENTS:
+        a = datetime.strptime(ann, "%Y%m%d").date()
+        e = datetime.strptime(first, "%Y%m%d").date()
+        if not (a <= t <= e + timedelta(days=14)):
+            continue
+        days = _tdays(e, e + timedelta(days=14))[:NSF_H]
+        if t > days[-1]:
+            continue
+        head = f"🏛️ 國安基金 {md(a)} 宣布進場（{note}）— 參考提醒，不改倉位（研究 280）"
+        stat = ("　歷史 10 次：宣布後第一個交易日開盤進台指期、第 5 天收盤出全部上漲、平均 +6.3%（扣急跌反彈後超額 +4.7%）；"
+                "當天收盤出只有 -0.1%，20 日以上不可靠（2000-10、2008 之後再跌 2 成以上）")
+        if t < e:
+            return ["", f"{head}：第一個反應交易日是 {md(e)}，到 {md(days[-1])} 收盤為歷史上偏多的 5 天", stat]
+        k = days.index(t) + 1 if t in days else None
+        if k is None:
+            return []
+        tail = "今天是第 5 天（最後一天）" if k == NSF_H else f"第 {k}／{NSF_H} 天，到 {md(days[-1])} 收盤"
+        return ["", f"{head}：{tail}", stat]
     return []
 
 

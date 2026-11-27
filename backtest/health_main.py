@@ -79,7 +79,7 @@ def trend_vr(years=8, q=26):
 
 
 def p_by_vol(recent_years=2):
-    """P 依前一天波動分級（2026-11-27 上線的 C 版，研究 444～466）的追蹤：近 recent_years 年各級每筆 vs 1998～ 全期
+    """P 依前一天波動分級（2026-11-27 上線的 C 版，研究 444～466）的追蹤（2026-11-27 改 C2）：近 recent_years 年各級每筆 vs 1998～ 全期
     分級用台指期近月 RV20（< 23%／23～36%／≥ 36%，與 VIX 25／35 對應）；低波動級近期轉正、高波動級近期轉負就該重檢"""
     import io
     import contextlib
@@ -89,7 +89,7 @@ def p_by_vol(recent_years=2):
     v, r, d = S.v_, S.r_, S.d_
     cut = (date.fromisoformat(d[-1]) - timedelta(days=365 * recent_years)).isoformat()
     out = []
-    for lab, g in (("平靜 0.5x", v < 0.23), ("中等 1x", (v >= 0.23) & (v < 0.36)), ("恐慌 1.5x", v >= 0.36)):
+    for lab, g in (("平靜（C2：在場 1x／空手 0x）", v < 0.23), ("中等 1x", (v >= 0.23) & (v < 0.36)), ("恐慌 1.5x", v >= 0.36)):
         rec = g & (d >= cut)
         tail = f"近 {recent_years} 年 {rec.sum()} 筆 {r[rec].mean():+.2%}" if rec.sum() else f"近 {recent_years} 年 0 筆"
         out.append(f"{lab}：全期 {g.sum()} 筆 每筆 {r[g].mean():+.2%}｜{tail}")

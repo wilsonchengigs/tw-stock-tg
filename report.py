@@ -1,7 +1,7 @@
 """
 每個交易日 21:30 傳台股日報到 Telegram（資料來源：臺灣證券交易所公開資料）
 
-- 下午（REPORT_PART=close）：加權指數漲跌、小時K MA20／60／240（資料存在 data/taiex_hourly.csv）、成交量（成交金額）、三大法人買賣超（證交所約 15:00 公布）
+- 下午（REPORT_PART=close）：加權指數漲跌、日線進出場線（MA60×1.01／MA80×0.975）、成交量（成交金額）、三大法人買賣超（證交所約 15:00 公布）
 - 晚上（REPORT_PART=margin）：大盤（上市）融資維持率、融資餘額增減（約 21:00 公布）、外資台指期淨未平倉（期交所）
 - REPORT_PART=all（預設，排程用這個）：兩段一起
 - REPORT_PART=alert（14:40 排程）：爆量收黑（研究 63／64b）觸發才送，附操作時間；21:30 日報有訊號時最上面列「今日有訊號觸發」與期限
@@ -161,6 +161,19 @@ def update_hourly(date: str) -> list:
         rows.sort()
         save_hourly(rows)
     return [r for r in rows if r[0] <= date]
+
+
+def daily_ma_line(date: str):
+    """日線：主策略用的進場線（MA60×1.01）與出場線（MA80×0.975），以及收盤離兩條線多遠"""
+    closes = taiex_daily(date)
+    if len(closes) < STRATEGY_EXIT_MA or closes[-1][0] != date:
+        return None
+    p = [c for _, c in closes]
+    px = p[-1]
+    up = sum(p[-STRATEGY_ENTRY_MA:]) / STRATEGY_ENTRY_MA * (1 + STRATEGY_ENTRY_BAND)
+    dn = sum(p[-STRATEGY_EXIT_MA:]) / STRATEGY_EXIT_MA * (1 - STRATEGY_EXIT_BAND)
+    return (f"日線（主策略用）：進場線 MA{STRATEGY_ENTRY_MA}×{1 + STRATEGY_ENTRY_BAND:g} {up:,.0f}（收盤{'已站上' if px > up else f'還差 {up / px - 1:+.1%}'}）"
+            f"・出場線 MA{STRATEGY_EXIT_MA}×{1 - STRATEGY_EXIT_BAND:g} {dn:,.0f}（收盤{'在上方' if px >= dn else '在下方'} {px / dn - 1:+.1%}）｜週五收盤判斷")
 
 
 def hourly_ma_line(date: str):
@@ -1064,10 +1077,10 @@ def close_lines(date: str, retry: bool):
     arrow = "🔺" if idx["change"] > 0 else "🔻" if idx["change"] < 0 else "➖"
     trend = "上漲" if idx["change"] > 0 else "下跌" if idx["change"] < 0 else "平盤"
     lines = [f"加權指數：{idx['close']:,.2f}　{arrow}{trend} {abs(idx['change']):,.2f} 點（{idx['pct']:+.2f}%）"]
-    try:
-        ma = hourly_ma_line(date)
+    try:  # 2026-11-27 使用者：主策略看日線，日報改列日線進出場線（原本的小時 K 均線容易誤會，移除）
+        ma = daily_ma_line(date)
     except Exception as e:  # 均線抓不到不影響其他資訊
-        print(f"小時K 均線失敗：{e}", file=sys.stderr)
+        print(f"日線均線失敗：{e}", file=sys.stderr)
         ma = None
     if ma:
         lines.append(ma)

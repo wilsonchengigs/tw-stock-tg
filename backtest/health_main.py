@@ -78,8 +78,33 @@ def trend_vr(years=8, q=26):
     return [f"{icon} 台股趨勢性：近 {years} 年週報酬 VR({q}) {vr:.2f}（> 1 有趨勢、均線策略的前提；< 1 時主策略容易長期落後，2016～2020 曾 0.66～0.95；研究 217，僅供參考）"]
 
 
+def p_by_vol(recent_years=2):
+    """P 依前一天波動分級（2026-11-27 上線的 C 版，研究 444～466）的追蹤：近 recent_years 年各級每筆 vs 1998～ 全期
+    分級用台指期近月 RV20（< 23%／23～36%／≥ 36%，與 VIX 25／35 對應）；低波動級近期轉正、高波動級近期轉負就該重檢"""
+    import io
+    import contextlib
+    import numpy as np
+    with contextlib.redirect_stdout(io.StringIO()):
+        S = load("r459_h", "research_459_P依RV倍數長歷史.py")
+    v, r, d = S.v_, S.r_, S.d_
+    cut = (date.fromisoformat(d[-1]) - timedelta(days=365 * recent_years)).isoformat()
+    out = []
+    for lab, g in (("平靜 0.5x", v < 0.23), ("中等 1x", (v >= 0.23) & (v < 0.36)), ("恐慌 1.5x", v >= 0.36)):
+        rec = g & (d >= cut)
+        tail = f"近 {recent_years} 年 {rec.sum()} 筆 {r[rec].mean():+.2%}" if rec.sum() else f"近 {recent_years} 年 0 筆"
+        out.append(f"{lab}：全期 {g.sum()} 筆 每筆 {r[g].mean():+.2%}｜{tail}")
+    return ["📊 恐慌做多依波動分級（研究 444～466，C 版）："] + ["　" + x for x in out]
+
+
+def _safe(fn):
+    try:
+        return fn()
+    except Exception as e:  # noqa: BLE001  追蹤段失敗不影響月檢其他段
+        return [f"⚠️ {fn.__name__} 失敗：{e}"]
+
+
 def main():
-    L = [f"🩺 主策略月檢（{date.today():%m/%d}）"] + light() + trend_vr() + [""] + audit()
+    L = [f"🩺 主策略月檢（{date.today():%m/%d}）"] + light() + trend_vr() + _safe(p_by_vol) + [""] + audit()
     txt = "\n".join(L)
     print(txt)
     open(os.path.join(HERE, "結果_每月主策略健檢.txt"), "w", encoding="utf-8").write(txt + "\n")

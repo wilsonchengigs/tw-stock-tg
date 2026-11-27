@@ -427,7 +427,7 @@ DIV_TH, DIV_N, DIV_ADD, DIV_H = 0.10, 20, 0.5, 5
 def divergence_lines(date: str, closes: list) -> list:
     if len(closes) < DIV_N + 1 or closes[-1][0] != date:
         return []
-    url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=3mo&interval=1d"
+    url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=1y&interval=1d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urlopen_retry(req) as res:
         r = json.loads(res.read().decode("utf-8"))["chart"]["result"][0]
@@ -480,7 +480,7 @@ def divergence_lines(date: str, closes: list) -> list:
                        else "5 次 平均 +0.5%、勝率 40%（中位 -0.4%）→ 優勢不明確，可不補或只補一半" if d1 < 0.03
                        else "9 次 平均 +2.8%、勝率 78%")
                 out.append(f"　錯過今天 08:45：可在今晚夜盤（15:00～隔天 05:00，收到日報時仍在交易）或明早 08:45 補進、一樣第 {DIV_H} 天收盤出（研究 220）｜"
-                           f"今天加權 {d1:+.1%}，歷史上同樣漲幅時補進：{ref}（研究 249，各組樣本少）")
+                           f"今天加權 {d1:+.1%}，歷史上同樣漲跌時補進：{ref}（研究 249，各組樣本少）")
             return out
     return []
 

@@ -395,6 +395,10 @@ def strategy_lines(date: str) -> list:
         lines += yearend_lines(date)
     except Exception as e:  # noqa: BLE001
         print(f"年底加碼失敗：{e}", file=sys.stderr)
+    try:
+        lines += lunar_lines(date)
+    except Exception as e:  # noqa: BLE001
+        print(f"春節加碼失敗：{e}", file=sys.stderr)
     return lines
 
 
@@ -464,7 +468,7 @@ def divergence_lines(date: str, closes: list) -> list:
     return []
 
 
-# ── 年底加碼（研究 262、262b、263；2026-11-26 使用者同意 0.5 倍，春節那條不加）──────────────────
+# ── 年底加碼（研究 262、262b、263；2026-11-26 使用者同意 0.5 倍）──────────────────
 # 12 月最後交易日前 3 個交易日收盤進 0.5 倍台指期，1 月第 5 個交易日收盤出；不分主策略狀態、不設停損。
 # 1998～2025 28 次：加權每筆 +2.1%、勝率 71%（家族 p 0.001）；台指期真實價 +2.2%、最差 -5.5%；2013 後較弱（約 +1.3%）。
 # 疊在現行（85% 00631L＋V+F+P+D）上 2018-06～ 65.1%→66.4%、回檔與最差單日不變（研究 263）。
@@ -506,6 +510,51 @@ def yearend_lines(date: str) -> list:
         rest = len([d for d in cal if t < d <= exit_])
         if rest == 1:
             return ["", f"📌 {head}：下個交易日（{md(exit_)}）13:45 收盤前平倉"]
+        return ["", f"👀 {head}：持有中，還有 {rest} 個交易日"]
+    return []
+
+
+# ── 春節不抱過年加碼（研究 261、267、268；2026-11-27 使用者同意 0.5 倍）──────────────────
+# 封關日（春節長假前最後交易日）前 3 個交易日收盤進 0.5 倍台指期，封關日收盤出（不抱過年，避開年後開紅盤的跳空風險）。
+# 1998～2026 29 次：加權每筆 +1.1%、勝率 72%、最差 -2.6%（家族 p 0.001）；台指期真實價 +0.85%、勝率 61%；2013 後較弱約 +0.6%；
+# 疊在現行＋年底上 2018-06～ 66.4%→67.3%、回檔與最差單日不變（研究 267）；其他市場同期沒有＝台股本地節前效應（研究 268）
+LN_ADD, LN_PRE = 0.5, 3
+
+
+def lunar_close_day(year: int):
+    """year 年春節長假前最後交易日（1、2 月中下一個交易日隔 ≥6 個日曆天）"""
+    days = _tdays(datetime(year, 1, 2).date(), datetime(year, 3, 10).date())
+    for a, b in zip(days, days[1:]):
+        if a.month in (1, 2) and (b - a).days >= 6:
+            return a, days
+    return None, days
+
+
+def lunar_lines(date: str) -> list:
+    t = datetime.strptime(date, "%Y%m%d").date()
+    if t.month not in (1, 2):
+        return []
+    close_, days = lunar_close_day(t.year)
+    if close_ is None:
+        return []
+    k = days.index(close_)
+    entry = days[k - LN_PRE]
+    md = lambda d: f"{d.month}/{d.day}"  # noqa: E731
+    head = f"春節加碼（{md(entry)} 收盤進 {LN_ADD} 倍台指期 → {md(close_)} 封關日收盤出、不抱過年，研究 267）"
+    stat = "　1998～2026 29 次：加權每筆 +1.1%、勝率 72%、最差 -2.6%；台指期真實價 28 筆 +0.85%、勝率 61%；2013 後較弱約 +0.6%｜不設停損、不分主策略狀態（回測，可能偏樂觀）"
+    if t < entry:
+        left = len([d for d in days if t < d <= entry])
+        if left == 1:
+            return ["", f"📅 {head}：下個交易日（{md(entry)}）13:45 收盤前加碼（來不及就當天 15:00 夜盤或隔天 08:45 開盤）", stat]
+        if left <= 5:
+            return ["", f"🗓️ {head}：再 {left} 個交易日進場"]
+        return []
+    if t == entry:
+        return ["", f"🎯 {head}：今天收盤該進場；還沒進的今晚夜盤或明早 08:45 補進，一樣 {md(close_)} 收盤出", stat]
+    if t < close_:
+        rest = len([d for d in days if t < d <= close_])
+        if rest == 1:
+            return ["", f"📌 {head}：下個交易日（{md(close_)}，封關日）13:45 收盤前平倉，不要抱過年"]
         return ["", f"👀 {head}：持有中，還有 {rest} 個交易日"]
     return []
 

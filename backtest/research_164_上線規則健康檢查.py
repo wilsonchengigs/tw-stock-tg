@@ -6,6 +6,7 @@
   F 外資期貨加碼（研究 128／172，v3 在場、抱 5 天，2018-06～）：最近 N＝10 筆
   D 台美背離加碼（研究 204～211，加權 20 日 − S&P 20 日 ≤-10% → 隔天開盤進、抱 5 天，不分 v3 狀態）：最近 N＝8 筆
   Y 年底加碼（研究 262～263，12 月最後交易日前 3 天收盤（≈隔天開盤）進、1 月第 5 個交易日收盤出）：最近 N＝6 筆
+  L 春節不抱過年（研究 267，封關前 3 天收盤（≈隔天開盤）進、封關日收盤出）：最近 N＝6 筆
 每條：全部筆數／勝率／每筆；最近 N 筆的平均，在「歷史上所有連續 N 筆平均」的分位
   < 10 分位 → ⚠️ 近期偏弱（不代表失效，但要留意）；< 3 分位 → 🚨 明顯偏弱，考慮暫停或降倍數
 資料：tx_daily_ohlc.csv、turnover_daily.csv、tx_inst_oi.csv、GSPC.json、margin_tw.csv（workflow 會先更新）
@@ -103,6 +104,13 @@ def main():
     ev = [(k - 2, near[ds[k - 3]], (k + 5, "close")) for k in ye]
     rs = [R175.trade(day, night, ds, j, m, hl, None) for j, m, hl in ev]
     out += check("年底加碼（0.5 倍、跨年約 8 天）", [ds[j] for j, _, _ in ev], rs, 6)
+    out.append("")
+    import datetime as _dt
+    ln = [k for k in range(3, n - 1) if ds[k][5:7] in ("01", "02")
+          and (_dt.date.fromisoformat(ds[k + 1]) - _dt.date.fromisoformat(ds[k])).days >= 6]
+    ev = [(k - 2, near[ds[k - 3]], (k, "close")) for k in ln]
+    rs = [R175.trade(day, night, ds, j, m, hl, None) for j, m, hl in ev]
+    out += check("春節不抱過年（0.5 倍、封關日出）", [ds[j] for j, _, _ in ev], rs, 6)
     out.append("")
     out.append("（分位＝最近 N 筆平均在歷史上所有連續 N 筆平均中的位置；< 10% 才需要留意。樣本少的規則波動本來就大）")
     txt = "\n".join(out)

@@ -38,7 +38,7 @@ jobs:
     permissions:
       contents: write  # 把新抓的資料（小時 K、日收盤、融資、P/C）存回 data/，下次只抓新的
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

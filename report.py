@@ -804,6 +804,9 @@ def tx_night(date: str):
             continue
         if best is None or v > best[3]:
             best = (r[2], o, c, v)
+    if best and (best[1] <= 0 or abs(best[2] / best[1] - 1) > 0.105):  # 研究 427：台指期漲跌幅上限 10%，超過＝資料錯誤
+        print(f"夜盤 {best} 開收變動超過 10.5%，當作資料錯誤", file=sys.stderr)
+        return None
     return best[:3] if best else None
 
 

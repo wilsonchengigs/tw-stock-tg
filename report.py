@@ -649,7 +649,34 @@ def nsf_lines(date: str) -> list:
             return []
         tail = "今天是第 5 天（最後一天）" if k == NSF_H else f"第 {k}／{NSF_H} 天，到 {md(days[-1])} 收盤"
         return ["", f"{head}：{tail}", stat]
-    return []
+    return nsf_news_hint(t)
+
+
+# 研究 292：Google News RSS 偵測「新宣布」——標題同時有「國安基金」與啟動／宣布／決議／授權／臨時委員會，
+# 3 天內、且離已登錄事件 >60 天才提示（在場期間天天有「已進場」報導，不能只看「進場」二字）。只提示，不自動當事件
+NSF_NEWS_KEYS = ("啟動護盤", "宣布進場", "決議進場", "臨時委員會", "授權", "啟動進場", "宣布護盤")
+
+
+def nsf_news_hint(t) -> list:
+    if any(abs((t - datetime.strptime(a, "%Y%m%d").date()).days) <= 60 for a, _, _ in NSF_EVENTS):
+        return []
+    q = urllib.parse.quote("國安基金 進場")
+    url = f"https://news.google.com/rss/search?q={q}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen_retry(req) as res:
+        x = res.read().decode("utf-8", "replace")
+    hits = []
+    for title, pub in re.findall(r"<item><title>(.*?)</title>.*?<pubDate>(.*?)</pubDate>", x, re.S):
+        try:
+            d = datetime.strptime(pub[5:16], "%d %b %Y").date()
+        except ValueError:
+            continue
+        if 0 <= (t - d).days <= 3 and "國安基金" in title and any(k in title for k in NSF_NEWS_KEYS):
+            hits.append(title.split(" - ")[0][:40])
+    if not hits:
+        return []
+    return ["", f"⚠️ 新聞疑似國安基金新宣布進場（{len(hits)} 則，例：「{hits[0]}」）→ 確認後把宣布日加進 report.py 的 NSF_EVENTS，"
+                "日報就會顯示研究 280 的 5 日參考（歷史 10 次全上漲、平均 +6.3%）"]
 
 
 # ── 在場時爆量收黑加碼（研究 63～64g，2026-11-24 使用者同意加入）──────────────────

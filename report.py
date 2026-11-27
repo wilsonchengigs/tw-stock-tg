@@ -829,6 +829,33 @@ def sp500_last(date: str):
     return rows[-1][0], chg
 
 
+def holiday_panic_lines(date: str) -> list:
+    """研究 428（觀察）：長假（台股休市 ≥4 個日曆天）後第一天，假期間 S&P 累積跌 ≥2% 但前一晚單日沒到 2%
+    1998～ 13 次：D 開→D+1 開每筆約 +0.6%、勝率 69%（樣本少，未納入規則，只提醒）"""
+    closes = taiex_daily(date)
+    prev = [d for d, _ in closes if d < date]
+    if not prev:
+        return []
+    p = datetime.strptime(prev[-1], "%Y%m%d")
+    if (datetime.strptime(date, "%Y%m%d") - p).days < 4:
+        return []
+    url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=1mo&interval=1d"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen_retry(req) as res:
+        r = json.loads(res.read().decode("utf-8"))["chart"]["result"][0]
+    ny = timezone(timedelta(hours=-5))
+    us = [(datetime.fromtimestamp(t, ny).strftime("%Y%m%d"), c) for t, c in zip(r["timestamp"], r["indicators"]["quote"][0]["close"]) if c]
+    a = [c for d, c in us if d < prev[-1]]
+    b = [c for d, c in us if d < date]
+    if not a or not b:
+        return []
+    cum = b[-1] / a[-1] - 1
+    if cum > -PANIC_TH or abs(cum) > 0.3:
+        return []
+    return [f"👀 觀察（研究 428，未納入規則）：長假後開紅盤，假期間 S&P500 累積 {cum:+.1%}（單日都沒跌到 {PANIC_TH:.0%}，恐慌做多沒觸發）",
+            f"　1998～ 同樣情況 13 次：今天 08:45 進、明天 08:45 出 每筆約 +0.6%、勝率 69%；樣本少，要不要做自行決定（做的話 {PANIC_ADD / 2:g} 倍以內）"]
+
+
 def morning_lines(date: str, retry: bool) -> list:
     """有觸發才回傳訊息行；排程時夜盤資料還沒出來會等（最多約 30 分鐘）"""
     night = wait_for(tx_night, date, retry)
@@ -842,6 +869,10 @@ def morning_lines(date: str, retry: bool) -> list:
     hit_s = sp is not None and sp[1] <= -PANIC_TH
     print(f"夜盤 {night} {nr}；S&P {sp}")
     if not (hit_n or hit_s):
+        try:
+            return holiday_panic_lines(date)
+        except Exception as e:  # noqa: BLE001
+            print(f"長假累積判斷失敗：{e}", file=sys.stderr)
         return []
     lines = []
     if night:

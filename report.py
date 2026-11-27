@@ -831,6 +831,31 @@ def sp500_last(date: str):
     return rows[-1][0], chg
 
 
+def _safe_vix(date: str):
+    try:
+        return vix_note(date)
+    except Exception as e:  # noqa: BLE001
+        print(f"VIX 讀取失敗：{e}", file=sys.stderr)
+        return None
+
+
+def vix_note(date: str):
+    """研究 444／445（參考、未納入規則）：前一天台指 VIX 與 P 倍數參考；資料來自 salmonmisosoup/leverage-dashboard 的 vixtwn.csv"""
+    url = "https://raw.githubusercontent.com/salmonmisosoup/leverage-dashboard/HEAD/data/vixtwn.csv"
+    with urlopen_retry(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})) as res:
+        rows = [ln.split(",") for ln in res.read().decode("utf-8").splitlines()[1:] if ln.strip()]
+    d0 = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+    prev = [(d, float(v)) for d, v in rows if d < d0 and v]
+    if not prev:
+        return None
+    d = prev[-1][0]
+    v = sorted(x for _, x in prev[-3:])[len(prev[-3:]) // 2]  # 最近 3 天中位數：來源偶有單日錯價（2026-11-24 26.18，前後 55～58）
+    tip = ("VIX < 25：研究 444 歷史上這區每筆 +0.13%、效率最低，保守者可只做 0.5 倍" if v < 25 else
+           "VIX ≥ 35：研究 444 歷史上這區每筆約 +0.9～2.5%、效率約 3 倍，進取者可做到 1.5 倍" if v >= 35 else
+           "VIX 25～35：照常 1 倍")
+    return f"📈 台指 VIX（至 {d[5:7]}/{d[8:]}，近 3 日中位）{v:.1f}｜{tip}（研究 444／445 參考，未納入規則；倍數由你決定）"
+
+
 def holiday_panic_lines(date: str) -> list:
     """研究 428（觀察）：長假（台股休市 ≥4 個日曆天）後第一天，假期間 S&P 累積跌 ≥2% 但前一晚單日沒到 2%
     1998～ 13 次：D 開→D+1 開每筆約 +0.6%、勝率 69%（樣本少，未納入規則，只提醒）"""
@@ -887,6 +912,7 @@ def morning_lines(date: str, retry: bool) -> list:
         ("只有 S&P 觸發（較弱，研究 158）", 61, "64%", "+0.20%", "+1.13%", "-1.46%")
     lines += [
         f"🎯 今天 08:45 開盤買台指期近月 {PANIC_ADD} 倍名目（不管主策略在不在場），抱到下一個交易日 08:45 開盤平倉；停損 5%（災難停損：只防極端，研究 175 期望值 +0.52%→+0.51%、302 筆約 9 筆觸發；更緊的 2～3% 會變差）",
+        *([vn] if (vn := _safe_vix(date)) else []),
         f"📊 這次是「{kind[0]}」：2017-05～ {kind[1]} 筆，勝率 {kind[2]}、期望值每筆 {kind[3]}、平均賺 {kind[4]}／平均賠 {kind[5]}",
         "📈 歷史（每筆扣 3 點成本）：",
         "・2017-05～2026（有夜盤，夜盤或 S&P 跌 ≥2%）99 筆：勝率 66%、期望值每筆 +0.49%（約 +104 點／口）、"
